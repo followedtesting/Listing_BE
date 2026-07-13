@@ -6,19 +6,19 @@ from adapters.base import BaseJobAdapter, JobListing
 
 logger = logging.getLogger(__name__)
 
-class VisaPortalAdapter(BaseJobAdapter):
+class SalesforcePortalAdapter(BaseJobAdapter):
     @property
     def portal_id(self) -> str:
-        return "visa_careers"
+        return "salesforce_careers"
 
     @property
     def portal_name(self) -> str:
-        return "Visa Careers Portal"
+        return "Salesforce Careers Portal"
 
     async def scrape(self) -> List[JobListing]:
         # Base URL to establish cookies, CORS context and session parameters
-        base_url = "https://visa.wd5.myworkdayjobs.com/Visa?q=Software+Engineer&locationCountry=c4f78be1a8f14da0ab49ce1162348a5e"
-        logger.info(f"Navigating to Visa Careers page to establish session context: {base_url}")
+        base_url = "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site"
+        logger.info(f"Navigating to Salesforce Careers page to establish session context: {base_url}")
         
         listings: List[JobListing] = []
         seen_ids = set()
@@ -39,23 +39,24 @@ class VisaPortalAdapter(BaseJobAdapter):
                 max_safety_limit = 200  # Avoid runaway loop
                 
                 while offset < max_safety_limit:
-                    logger.info(f"Fetching Visa careers listings starting at offset {offset}...")
+                    logger.info(f"Fetching Salesforce careers listings starting at offset {offset}...")
                     
-                    # Prepare POST request payload
+                    # Prepare POST request payload with exact filters for India and Software Engineering
                     payload = {
                         "appliedFacets": {
-                            "locationCountry": ["c4f78be1a8f14da0ab49ce1162348a5e"]
+                            "CF_-_REC_-_LRV_-_Job_Posting_Anchor_-_Country_from_Job_Posting_Location_Extended": ["c4f78be1a8f14da0ab49ce1162348a5e"],
+                            "jobFamilyGroup": ["14fa3452ec7c1011f90d0002a2100000"]
                         },
                         "limit": limit,
                         "offset": offset,
-                        "searchText": "Software Engineer"
+                        "searchText": ""
                     }
                     
                     # Execute fetch via page.evaluate
                     result = await page.evaluate(f"""
                         async () => {{
                             try {{
-                                const response = await fetch('/wday/cxs/visa/Visa/jobs', {{
+                                const response = await fetch('/wday/cxs/salesforce/External_Career_Site/jobs', {{
                                     method: 'POST',
                                     headers: {{
                                         'Content-Type': 'application/json',
@@ -74,19 +75,19 @@ class VisaPortalAdapter(BaseJobAdapter):
                     """)
                     
                     if not result:
-                        logger.warning(f"Visa Careers API call at offset {offset} returned empty result.")
+                        logger.warning(f"Salesforce Careers API call at offset {offset} returned empty result.")
                         break
                         
                     if "error" in result and result["error"]:
-                        logger.error(f"Error fetching from Visa API at offset {offset}: {result['error']}")
+                        logger.error(f"Error fetching from Salesforce API at offset {offset}: {result['error']}")
                         break
                         
                     job_postings = result.get("jobPostings", [])
                     if not job_postings or len(job_postings) == 0:
-                        logger.info(f"No more jobs found in Visa response at offset {offset}. Stopping pagination.")
+                        logger.info(f"No more jobs found in Salesforce response at offset {offset}. Stopping pagination.")
                         break
                         
-                    logger.info(f"Retrieved {len(job_postings)} job postings from Visa Careers at offset {offset}.")
+                    logger.info(f"Retrieved {len(job_postings)} job postings from Salesforce Careers at offset {offset}.")
                     
                     duplicate_found = False
                     for job in job_postings:
@@ -117,7 +118,7 @@ class VisaPortalAdapter(BaseJobAdapter):
                         if ext_path.startswith("http"):
                             job_listing_link = ext_path
                         else:
-                            job_listing_link = f"https://visa.wd5.myworkdayjobs.com/Visa{ext_path}"
+                            job_listing_link = f"https://salesforce.wd12.myworkdayjobs.com/External_Career_Site{ext_path}"
                             
                         if jobid and title and job_listing_link:
                             listings.append(
@@ -134,10 +135,10 @@ class VisaPortalAdapter(BaseJobAdapter):
                     offset += limit
                     
             except Exception as e:
-                logger.error(f"Failed to scrape Visa Careers Portal: {e}", exc_info=True)
+                logger.error(f"Failed to scrape Salesforce Careers Portal: {e}", exc_info=True)
                 raise
             finally:
                 await browser.close()
                 
-        logger.info(f"Finished Visa Careers scrape. Found total {len(listings)} listings.")
+        logger.info(f"Finished Salesforce Careers scrape. Found total {len(listings)} listings.")
         return listings
