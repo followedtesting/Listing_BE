@@ -7,6 +7,7 @@ from config import settings
 from storage import JSONJobStorage
 from adapters.base import BaseJobAdapter
 from adapters.microsoft_portal import MicrosoftPortalAdapter
+from adapters.visa_portal import VisaPortalAdapter
 
 # Configure logging
 logging.basicConfig(
@@ -19,9 +20,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # List of active adapters that will be scraped.
-# Since we removed mock and generic portals, only Microsoft Careers remains.
 ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     MicrosoftPortalAdapter(),
+    VisaPortalAdapter(),
 ]
 
 app = FastAPI(
