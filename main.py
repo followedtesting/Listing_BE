@@ -8,6 +8,7 @@ from storage import JSONJobStorage
 from adapters.base import BaseJobAdapter
 from adapters.microsoft_portal import MicrosoftPortalAdapter
 from adapters.visa_portal import VisaPortalAdapter
+from adapters.salesforce_portal import SalesforcePortalAdapter
 
 # Configure logging
 logging.basicConfig(
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     MicrosoftPortalAdapter(),
     VisaPortalAdapter(),
+    SalesforcePortalAdapter(),
 ]
 
 app = FastAPI(
