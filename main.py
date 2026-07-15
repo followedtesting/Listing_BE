@@ -9,6 +9,11 @@ from adapters.base import BaseJobAdapter
 from adapters.microsoft_portal import MicrosoftPortalAdapter
 from adapters.visa_portal import VisaPortalAdapter
 from adapters.salesforce_portal import SalesforcePortalAdapter
+from adapters.adobe_portal import AdobePortalAdapter
+from adapters.servicenow_portal import ServiceNowPortalAdapter
+from adapters.standard_chartered_portal import StandardCharteredPortalAdapter
+from adapters.apple_portal import ApplePortalAdapter
+from adapters.akamai_portal import AkamaiPortalAdapter
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +30,11 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     MicrosoftPortalAdapter(),
     VisaPortalAdapter(),
     SalesforcePortalAdapter(),
+    AdobePortalAdapter(),
+    ServiceNowPortalAdapter(),
+    StandardCharteredPortalAdapter(),
+    ApplePortalAdapter(),
+    AkamaiPortalAdapter(),
 ]
 
 app = FastAPI(
