@@ -1,10 +1,12 @@
+from contextlib import asynccontextmanager
 import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 
 from config import settings
-from storage import JSONJobStorage
+from database import init_db
+from storage import JobStorage, JSONJobStorage
 from adapters.base import BaseJobAdapter
 from adapters.microsoft_portal import MicrosoftPortalAdapter
 from adapters.visa_portal import VisaPortalAdapter
@@ -14,6 +16,7 @@ from adapters.servicenow_portal import ServiceNowPortalAdapter
 from adapters.standard_chartered_portal import StandardCharteredPortalAdapter
 from adapters.apple_portal import ApplePortalAdapter
 from adapters.akamai_portal import AkamaiPortalAdapter
+from mailer import generate_email_html, send_html_email
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +27,12 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database on startup if DATABASE_URL is set
+    init_db()
+    yield
 
 # List of active adapters that will be scraped.
 ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
@@ -39,8 +48,9 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
 
 app = FastAPI(
     title="Antigravity Job Listing Tracker",
-    description="A FastAPI backend tracking job listings using Playwright.",
-    version="1.0.0"
+    description="A FastAPI backend tracking job listings using Playwright and NeonDB.",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Configure CORS to allow access from React frontend
@@ -58,16 +68,23 @@ async def scrape_portal_task(adapter: BaseJobAdapter) -> None:
     try:
         current_listings = await adapter.scrape()
         listings_data = [job.model_dump() for job in current_listings]
-        new_listings = JSONJobStorage.diff_and_update(adapter.portal_id, listings_data)
+        new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
         logger.info(f"Background scrape complete for '{adapter.portal_name}'. Found {len(new_listings)} new listings.")
     except Exception as e:
         logger.error(f"Error in background scrape task for '{adapter.portal_name}': {e}", exc_info=True)
+
+async def run_all_adapters_sequentially_task() -> None:
+    """Runs all active adapters strictly sequentially in the background to minimize RAM usage."""
+    logger.info("=== Starting Background Sequential Execution for ALL Portals ===")
+    for adapter in ACTIVE_ADAPTERS:
+        await scrape_portal_task(adapter)
 
 @app.get("/")
 def get_root():
     return {
         "app": "Antigravity Job Listing Tracker Backend",
         "status": "running",
+        "storage_backend": "NeonDB (PostgreSQL)" if JobStorage.is_db_enabled() else "JSON Storage",
         "data_dir": settings.DATA_DIR,
         "active_portals": [a.portal_id for a in ACTIVE_ADAPTERS]
     }
@@ -79,8 +96,8 @@ def get_portals():
         {
             "id": a.portal_id,
             "name": a.portal_name,
-            "current_listings_count": len(JSONJobStorage.get_previous_listings(a.portal_id)),
-            "new_listings_count": len(JSONJobStorage.get_new_listings(a.portal_id))
+            "current_listings_count": len(JobStorage.get_previous_listings(a.portal_id)),
+            "new_listings_count": len(JobStorage.get_new_listings(a.portal_id))
         } for a in ACTIVE_ADAPTERS
     ]
 
@@ -91,7 +108,7 @@ def get_stored_listings(portal_id: str):
     if not adapter:
         raise HTTPException(status_code=404, detail=f"Portal '{portal_id}' not found.")
     
-    listings = JSONJobStorage.get_previous_listings(portal_id)
+    listings = JobStorage.get_previous_listings(portal_id)
     return {
         "portal_id": portal_id,
         "portal_name": adapter.portal_name,
@@ -106,7 +123,7 @@ def get_new_listings(portal_id: str):
     if not adapter:
         raise HTTPException(status_code=404, detail=f"Portal '{portal_id}' not found.")
     
-    listings = JSONJobStorage.get_new_listings(portal_id)
+    listings = JobStorage.get_new_listings(portal_id)
     return {
         "portal_id": portal_id,
         "portal_name": adapter.portal_name,
@@ -117,24 +134,25 @@ def get_new_listings(portal_id: str):
 @app.post("/trigger-scrape")
 async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool = False):
     """
-    Triggers scraping on all active portals.
-    Can be run in the background (asynchronous) or foreground (returns results immediately).
+    Triggers scraping on all active portals strictly sequentially.
+    Runs one adapter at a time to minimize RAM and CPU usage.
     """
     if background:
-        # Trigger background execution
-        for adapter in ACTIVE_ADAPTERS:
-            background_tasks.add_task(scrape_portal_task, adapter)
-        return {"status": "triggered", "message": "Scraping jobs triggered in the background."}
+        # Enqueue a single sequential runner task to prevent simultaneous browser instances
+        background_tasks.add_task(run_all_adapters_sequentially_task)
+        return {"status": "triggered", "message": "Sequential scraping jobs triggered in the background."}
 
-    # Execute in the foreground to return current results
+    # Execute in the foreground sequentially
+    logger.info("=== Starting Foreground Sequential Execution for ALL Portals ===")
     results = {}
     for adapter in ACTIVE_ADAPTERS:
+        logger.info(f"--> Sequential Execution: Scraping portal '{adapter.portal_name}' ({adapter.portal_id})...")
         try:
             current_listings = await adapter.scrape()
             listings_data = [job.model_dump() for job in current_listings]
             
-            # Diff and save state
-            new_listings = JSONJobStorage.diff_and_update(adapter.portal_id, listings_data)
+            # Diff and save state via JobStorage
+            new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
             
             results[adapter.portal_id] = {
                 "portal_name": adapter.portal_name,
@@ -142,6 +160,7 @@ async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool
                 "new_listings_count": len(new_listings),
                 "new_listings": new_listings
             }
+            logger.info(f"Finished scraping '{adapter.portal_name}'. Total: {len(listings_data)}, New: {len(new_listings)}")
         except Exception as e:
             logger.error(f"Error executing scrape for '{adapter.portal_name}': {e}", exc_info=True)
             results[adapter.portal_id] = {
@@ -177,3 +196,83 @@ async def trigger_scrape_single(portal_id: str):
     except Exception as e:
         logger.error(f"Error scraping single portal '{portal_id}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/trigger-scrape-sequential")
+async def trigger_scrape_sequential():
+    """
+    Triggers all active adapters ONE BY ONE strictly sequentially.
+    Checks if new listing AND old listing were both zero earlier for each portal.
+    Collects new listings (or all listings if both were zero earlier).
+    Generates a formatted HTML email report with job buttons and sends it.
+    """
+    logger.info("=== Starting Sequential Adapter Execution for ALL Portals ===")
+    results = {}
+    report_data = []
+    total_new_listings = 0
+    total_portals_scraped = 0
+
+    for adapter in ACTIVE_ADAPTERS:
+        logger.info(f"--> Sequential Run: Scraping portal '{adapter.portal_name}' ({adapter.portal_id})...")
+        try:
+            # Check baseline before scrape
+            prev_listings = JSONJobStorage.get_previous_listings(adapter.portal_id)
+            prev_new_listings = JSONJobStorage.get_new_listings(adapter.portal_id)
+            was_both_zero_earlier = (len(prev_listings) == 0 and len(prev_new_listings) == 0)
+
+            current_listings = await adapter.scrape()
+            listings_data = [job.model_dump() for job in current_listings]
+            
+            # Diff and save state
+            new_listings = JSONJobStorage.diff_and_update(adapter.portal_id, listings_data)
+            
+            # Determine items for email digest:
+            # Only new listings, OR all current listings if both new and old were zero earlier
+            if was_both_zero_earlier:
+                report_items = listings_data
+            else:
+                report_items = new_listings
+
+            report_entry = {
+                "portal_id": adapter.portal_id,
+                "portal_name": adapter.portal_name,
+                "was_both_zero_earlier": was_both_zero_earlier,
+                "total_scraped": len(listings_data),
+                "new_listings_count": len(new_listings),
+                "report_items": report_items
+            }
+            
+            results[adapter.portal_id] = report_entry
+            report_data.append(report_entry)
+            total_new_listings += len(new_listings)
+            total_portals_scraped += 1
+            
+            logger.info(f"Finished sequential scrape for '{adapter.portal_name}'. Total: {len(listings_data)}, New: {len(new_listings)}, Both zero earlier: {was_both_zero_earlier}")
+        except Exception as e:
+            logger.error(f"Error during sequential scrape for '{adapter.portal_name}': {e}", exc_info=True)
+            report_entry = {
+                "portal_id": adapter.portal_id,
+                "portal_name": adapter.portal_name,
+                "status": "error",
+                "error": str(e),
+                "report_items": []
+            }
+            results[adapter.portal_id] = report_entry
+            report_data.append(report_entry)
+
+    # Build and send HTML Email Report
+    logger.info("Generating HTML Email Digest...")
+    html_content = generate_email_html(report_data)
+    email_sent, email_msg = send_html_email(
+        subject=f"Job Tracker Digest - {total_new_listings} New Listing(s) Found",
+        html_content=html_content
+    )
+
+    return {
+        "status": "completed",
+        "total_portals_scraped": total_portals_scraped,
+        "total_new_listings": total_new_listings,
+        "email_sent": email_sent,
+        "email_message": email_msg,
+        "results": results
+    }
+
