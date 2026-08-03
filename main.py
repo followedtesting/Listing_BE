@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import gc
 import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,21 +64,28 @@ app.add_middleware(
 )
 
 async def scrape_portal_task(adapter: BaseJobAdapter) -> None:
-    """Helper task to run scraping and save diff in the background."""
+    """Helper task to run scraping and save diff in the background for a single portal."""
     logger.info(f"--- Starting background scrape job for portal: {adapter.portal_name} ({adapter.portal_id}) ---")
     try:
         current_listings = await adapter.scrape()
         listings_data = [job.model_dump() for job in current_listings]
+        del current_listings
+        
         new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
-        logger.info(f"Background scrape complete for '{adapter.portal_name}'. Found {len(new_listings)} new listings.")
+        del listings_data
+        del new_listings
+        logger.info(f"Background scrape complete for '{adapter.portal_name}'.")
     except Exception as e:
         logger.error(f"Error in background scrape task for '{adapter.portal_name}': {e}", exc_info=True)
+    finally:
+        gc.collect()
 
 async def run_all_adapters_sequentially_task() -> None:
     """Runs all active adapters strictly sequentially in the background to minimize RAM usage."""
-    logger.info("=== Starting Background Sequential Execution for ALL Portals ===")
+    logger.info("=== Starting Background Sequential Execution for ALL Portals (RAM Optimized) ===")
     for adapter in ACTIVE_ADAPTERS:
         await scrape_portal_task(adapter)
+        gc.collect()
 
 @app.get("/")
 def get_root():
@@ -135,32 +143,36 @@ def get_new_listings(portal_id: str):
 async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool = False):
     """
     Triggers scraping on all active portals strictly sequentially.
-    Runs one adapter at a time to minimize RAM and CPU usage.
+    Runs one adapter at a time and cleans RAM after each portal to minimize memory usage.
     """
     if background:
-        # Enqueue a single sequential runner task to prevent simultaneous browser instances
         background_tasks.add_task(run_all_adapters_sequentially_task)
         return {"status": "triggered", "message": "Sequential scraping jobs triggered in the background."}
 
-    # Execute in the foreground sequentially
-    logger.info("=== Starting Foreground Sequential Execution for ALL Portals ===")
+    logger.info("=== Starting Foreground Sequential Execution for ALL Portals (RAM Optimized) ===")
     results = {}
     for adapter in ACTIVE_ADAPTERS:
         logger.info(f"--> Sequential Execution: Scraping portal '{adapter.portal_name}' ({adapter.portal_id})...")
         try:
             current_listings = await adapter.scrape()
             listings_data = [job.model_dump() for job in current_listings]
+            del current_listings
             
             # Diff and save state via JobStorage
             new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
             
+            total_scraped = len(listings_data)
+            new_count = len(new_listings)
+            
+            del listings_data
+            del new_listings
+            
             results[adapter.portal_id] = {
                 "portal_name": adapter.portal_name,
-                "total_scraped": len(listings_data),
-                "new_listings_count": len(new_listings),
-                "new_listings": new_listings
+                "total_scraped": total_scraped,
+                "new_listings_count": new_count
             }
-            logger.info(f"Finished scraping '{adapter.portal_name}'. Total: {len(listings_data)}, New: {len(new_listings)}")
+            logger.info(f"Finished scraping '{adapter.portal_name}'. Total: {total_scraped}, New: {new_count}")
         except Exception as e:
             logger.error(f"Error executing scrape for '{adapter.portal_name}': {e}", exc_info=True)
             results[adapter.portal_id] = {
@@ -168,6 +180,8 @@ async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            gc.collect()
             
     return {
         "status": "completed",
@@ -184,28 +198,36 @@ async def trigger_scrape_single(portal_id: str):
     try:
         current_listings = await adapter.scrape()
         listings_data = [job.model_dump() for job in current_listings]
-        new_listings = JSONJobStorage.diff_and_update(adapter.portal_id, listings_data)
+        del current_listings
+        
+        new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
+        
+        total_scraped = len(listings_data)
+        new_count = len(new_listings)
+        
+        del listings_data
         
         return {
             "status": "completed",
             "portal_name": adapter.portal_name,
-            "total_scraped": len(listings_data),
-            "new_listings_count": len(new_listings),
+            "total_scraped": total_scraped,
+            "new_listings_count": new_count,
             "new_listings": new_listings
         }
     except Exception as e:
         logger.error(f"Error scraping single portal '{portal_id}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        gc.collect()
 
 @app.post("/trigger-scrape-sequential")
 async def trigger_scrape_sequential():
     """
-    Triggers all active adapters ONE BY ONE strictly sequentially.
+    Triggers all active adapters ONE BY ONE strictly sequentially with RAM cleanup.
     Checks if new listing AND old listing were both zero earlier for each portal.
-    Collects new listings (or all listings if both were zero earlier).
-    Generates a formatted HTML email report with job buttons and sends it.
+    Collects report items, generates a formatted HTML email report, and sends it.
     """
-    logger.info("=== Starting Sequential Adapter Execution for ALL Portals ===")
+    logger.info("=== Starting Sequential Adapter Execution for ALL Portals (RAM Optimized) ===")
     results = {}
     report_data = []
     total_new_listings = 0
@@ -214,16 +236,22 @@ async def trigger_scrape_sequential():
     for adapter in ACTIVE_ADAPTERS:
         logger.info(f"--> Sequential Run: Scraping portal '{adapter.portal_name}' ({adapter.portal_id})...")
         try:
-            # Check baseline before scrape
-            prev_listings = JSONJobStorage.get_previous_listings(adapter.portal_id)
-            prev_new_listings = JSONJobStorage.get_new_listings(adapter.portal_id)
+            # Check baseline before scrape using unified JobStorage
+            prev_listings = JobStorage.get_previous_listings(adapter.portal_id)
+            prev_new_listings = JobStorage.get_new_listings(adapter.portal_id)
             was_both_zero_earlier = (len(prev_listings) == 0 and len(prev_new_listings) == 0)
+            del prev_listings
+            del prev_new_listings
 
             current_listings = await adapter.scrape()
             listings_data = [job.model_dump() for job in current_listings]
+            del current_listings
             
             # Diff and save state
-            new_listings = JSONJobStorage.diff_and_update(adapter.portal_id, listings_data)
+            new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
+            
+            total_scraped = len(listings_data)
+            new_count = len(new_listings)
             
             # Determine items for email digest:
             # Only new listings, OR all current listings if both new and old were zero earlier
@@ -236,17 +264,21 @@ async def trigger_scrape_sequential():
                 "portal_id": adapter.portal_id,
                 "portal_name": adapter.portal_name,
                 "was_both_zero_earlier": was_both_zero_earlier,
-                "total_scraped": len(listings_data),
-                "new_listings_count": len(new_listings),
+                "total_scraped": total_scraped,
+                "new_listings_count": new_count,
                 "report_items": report_items
             }
             
-            results[adapter.portal_id] = report_entry
+            results[adapter.portal_id] = {
+                "portal_name": adapter.portal_name,
+                "total_scraped": total_scraped,
+                "new_listings_count": new_count
+            }
             report_data.append(report_entry)
-            total_new_listings += len(new_listings)
+            total_new_listings += new_count
             total_portals_scraped += 1
             
-            logger.info(f"Finished sequential scrape for '{adapter.portal_name}'. Total: {len(listings_data)}, New: {len(new_listings)}, Both zero earlier: {was_both_zero_earlier}")
+            logger.info(f"Finished sequential scrape for '{adapter.portal_name}'. Total: {total_scraped}, New: {new_count}, Both zero earlier: {was_both_zero_earlier}")
         except Exception as e:
             logger.error(f"Error during sequential scrape for '{adapter.portal_name}': {e}", exc_info=True)
             report_entry = {
@@ -258,14 +290,21 @@ async def trigger_scrape_sequential():
             }
             results[adapter.portal_id] = report_entry
             report_data.append(report_entry)
+        finally:
+            gc.collect()
 
     # Build and send HTML Email Report
     logger.info("Generating HTML Email Digest...")
     html_content = generate_email_html(report_data)
+    del report_data
+    gc.collect()
+
     email_sent, email_msg = send_html_email(
         subject=f"Job Tracker Digest - {total_new_listings} New Listing(s) Found",
         html_content=html_content
     )
+    del html_content
+    gc.collect()
 
     return {
         "status": "completed",
@@ -275,4 +314,5 @@ async def trigger_scrape_sequential():
         "email_message": email_msg,
         "results": results
     }
+
 
