@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import gc
 import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -17,6 +18,7 @@ from adapters.servicenow_portal import ServiceNowPortalAdapter
 from adapters.standard_chartered_portal import StandardCharteredPortalAdapter
 from adapters.apple_portal import ApplePortalAdapter
 from adapters.akamai_portal import AkamaiPortalAdapter
+from adapters.goldman_sachs_portal import GoldmanSachsPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -45,6 +47,7 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     StandardCharteredPortalAdapter(),
     ApplePortalAdapter(),
     AkamaiPortalAdapter(),
+    GoldmanSachsPortalAdapter(),
 ]
 
 app = FastAPI(
@@ -86,6 +89,7 @@ async def run_all_adapters_sequentially_task() -> None:
     for adapter in ACTIVE_ADAPTERS:
         await scrape_portal_task(adapter)
         gc.collect()
+        await asyncio.sleep(5)
 
 @app.get("/")
 def get_root():
@@ -314,5 +318,66 @@ async def trigger_scrape_sequential():
         "email_message": email_msg,
         "results": results
     }
+
+@app.post("/send-digest-email")
+async def send_digest_email():
+    """
+    Generates and sends an HTML email digest based on currently stored portal states in JobStorage.
+    Can be called after individual portal scrapes complete (e.g. from frontend or cron).
+    """
+    logger.info("=== Generating and Sending HTML Email Digest from Storage ===")
+    report_data = []
+    total_new_listings = 0
+    total_portals_scraped = 0
+
+    for adapter in ACTIVE_ADAPTERS:
+        try:
+            prev_listings = JobStorage.get_previous_listings(adapter.portal_id)
+            prev_new_listings = JobStorage.get_new_listings(adapter.portal_id)
+            
+            total_scraped = len(prev_listings)
+            new_count = len(prev_new_listings)
+            
+            if prev_new_listings:
+                report_items = prev_new_listings
+                was_both_zero = False
+            else:
+                report_items = prev_listings
+                was_both_zero = True if total_scraped > 0 else False
+
+            report_entry = {
+                "portal_id": adapter.portal_id,
+                "portal_name": adapter.portal_name,
+                "was_both_zero_earlier": was_both_zero,
+                "total_scraped": total_scraped,
+                "new_listings_count": new_count,
+                "report_items": report_items
+            }
+            report_data.append(report_entry)
+            total_new_listings += new_count
+            total_portals_scraped += 1
+        except Exception as e:
+            logger.error(f"Error compiling email report for portal '{adapter.portal_name}': {e}", exc_info=True)
+
+    logger.info("Generating HTML Email Digest...")
+    html_content = generate_email_html(report_data)
+    del report_data
+    gc.collect()
+
+    email_sent, email_msg = send_html_email(
+        subject=f"Job Tracker Digest - {total_new_listings} New Listing(s) Found",
+        html_content=html_content
+    )
+    del html_content
+    gc.collect()
+
+    return {
+        "status": "completed",
+        "total_portals": total_portals_scraped,
+        "total_new_listings": total_new_listings,
+        "email_sent": email_sent,
+        "email_message": email_msg
+    }
+
 
 
