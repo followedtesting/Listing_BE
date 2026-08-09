@@ -19,6 +19,19 @@ from adapters.standard_chartered_portal import StandardCharteredPortalAdapter
 from adapters.apple_portal import ApplePortalAdapter
 from adapters.akamai_portal import AkamaiPortalAdapter
 from adapters.goldman_sachs_portal import GoldmanSachsPortalAdapter
+from adapters.nielsen_portal import NielsenPortalAdapter
+from adapters.cisco_portal import CiscoPortalAdapter
+from adapters.barclays_portal import BarclaysPortalAdapter
+from adapters.razorpay_portal import RazorpayPortalAdapter
+from adapters.amazon_portal import AmazonPortalAdapter
+from adapters.zscaler_portal import ZscalerPortalAdapter
+from adapters.nielseniq_portal import NielsenIQPortalAdapter
+from adapters.nutanix_portal import NutanixPortalAdapter
+from adapters.meesho_portal import MeeshoPortalAdapter
+from adapters.everpure_portal import EverpurePortalAdapter
+from adapters.thomson_reuters_portal import ThomsonReutersPortalAdapter
+from adapters.netapp_portal import NetAppPortalAdapter
+from adapters.fnz_portal import FNZPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -48,6 +61,19 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     ApplePortalAdapter(),
     AkamaiPortalAdapter(),
     GoldmanSachsPortalAdapter(),
+    NielsenPortalAdapter(),
+    CiscoPortalAdapter(),
+    BarclaysPortalAdapter(),
+    RazorpayPortalAdapter(),
+    AmazonPortalAdapter(),
+    ZscalerPortalAdapter(),
+    NielsenIQPortalAdapter(),
+    NutanixPortalAdapter(),
+    MeeshoPortalAdapter(),
+    EverpurePortalAdapter(),
+    ThomsonReutersPortalAdapter(),
+    NetAppPortalAdapter(),
+    FNZPortalAdapter(),
 ]
 
 app = FastAPI(
