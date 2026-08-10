@@ -1,38 +1,63 @@
 [
   {
+    "jobid": "JR350260",
+    "role_name": "Software Engineering SMTS/ LMTS - LLM Model building",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Software-Engineering-SMTS--LLM-Model-building_JR350260"
+  },
+  {
+    "jobid": "JR350932",
+    "role_name": "Software Engineering SMTS (Storage & Data Protection)",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Software-Engineering-SMTS--Storage---Data-Protection-Engineer_JR350932"
+  },
+  {
+    "jobid": "JR282410",
+    "role_name": "Lead Software Engineer/LMTS - Backend - Distributed Systems - Hyderabad",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Lead-Software-Engineer-LMTS---Backend---Distributed-Systems---Hyderabad_JR282410"
+  },
+  {
+    "jobid": "JR350942",
+    "role_name": "Senior Manager, Software Engineering",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Senior-Manager--Software-Engineering_JR350942-1"
+  },
+  {
+    "jobid": "JR338174",
+    "role_name": "Software Engineering LMTS - Backend Distributed Systems",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Software-Engineering-LMTS_JR338174"
+  },
+  {
+    "jobid": "JR351176",
+    "role_name": "Senior DevOps Engineer",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Software-Engineering-SMTS_JR351176"
+  },
+  {
+    "jobid": "JR282414",
+    "role_name": "Principal Software Engineer / PMTS - Bangalore",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Principal-Software-Engineer---PMTS---Bangalore_JR282414"
+  },
+  {
+    "jobid": "JR338244",
+    "role_name": "Software Engineering Architect/PMTS-SDET",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Principal-Software-Engineer---PMTS_JR338244"
+  },
+  {
+    "jobid": "JR347776",
+    "role_name": "Network Security Software Development - SMTS",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Network-Security-Software-Development---SMTS_JR347776"
+  },
+  {
+    "jobid": "JR350005",
+    "role_name": "Portfolio Leader (Builder People Lead)",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Senior-Director--Builder-SE_JR350005"
+  },
+  {
+    "jobid": "JR351627",
+    "role_name": "The Exponential Software Engineer / Principal Agentic Architect",
+    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/The-Exponential-Software-Engineer---Principal-Agentic-Architect_JR351627"
+  },
+  {
     "jobid": "JR327542",
     "role_name": "Senior Manager, Engineering - Tableau",
     "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Senior-Manager--Engineering---Tableau_JR327542"
-  },
-  {
-    "jobid": "JR332308",
-    "role_name": "Employee Success Data Engineer - Snowflake",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Employee-Success-Data-Engineer---Snowflake_JR332308"
-  },
-  {
-    "jobid": "JR346275",
-    "role_name": "LMTS- Devops (VOIP)",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Software-Engineering-LMTS_JR346275-1"
-  },
-  {
-    "jobid": "JR340537",
-    "role_name": "Software Engineering Backend + AI  LMTS",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/SMTS-LMTS---AI-ML-Engineers_JR340537"
-  },
-  {
-    "jobid": "JR331267",
-    "role_name": "Senior Manager, Software Engineering, Missionforce",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Senior-Manager--Software-Engineering--Missionforce_JR331267-1"
-  },
-  {
-    "jobid": "JR327543",
-    "role_name": "Software Engineering LMTS - Tableau",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Hyderabad/Software-Engineering-LMTS---Tableau_JR327543"
-  },
-  {
-    "jobid": "JR341627",
-    "role_name": "Principal Software Engineer (PMTS) - Backend - Infrastructure - Distributed Systems - Bangalore",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Principal-Software-Engineer--PMTS----Backend---Infrastructure---Distributed-Systems_JR341627"
   },
   {
     "jobid": "JR343708",
@@ -43,11 +68,6 @@
     "jobid": "JR338247",
     "role_name": "Software Engineering - Senior Manager",
     "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Software-Engineering---Senior-Manager_JR338247"
-  },
-  {
-    "jobid": "JR338244",
-    "role_name": "Software Engineering Architect/PMTS-SDET",
-    "job_listing_link": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Principal-Software-Engineer---PMTS_JR338244"
   },
   {
     "jobid": "JR335225",
