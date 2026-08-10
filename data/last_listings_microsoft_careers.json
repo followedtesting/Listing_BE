@@ -1,18 +1,53 @@
 [
   {
-    "jobid": "200041512",
-    "role_name": "Solution Architecture -- Copilot",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556914608"
+    "jobid": "200037009",
+    "role_name": "Consultant, AI Business Solutions",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864631"
   },
   {
-    "jobid": "200039798",
-    "role_name": "Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556873791"
+    "jobid": "200044209",
+    "role_name": "Principal Silicon Design Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556939440"
   },
   {
-    "jobid": "200042523",
-    "role_name": "Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556925493"
+    "jobid": "200041236",
+    "role_name": "Software Engineer II - CoreAI Bangalore",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556912756"
+  },
+  {
+    "jobid": "200020127",
+    "role_name": "Principal Consultant - Data & AI",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556657623"
+  },
+  {
+    "jobid": "200044465",
+    "role_name": "Principal Software Engineering Manager",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556940489"
+  },
+  {
+    "jobid": "200044142",
+    "role_name": "Principal Software Engineering Manager",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556939264"
+  },
+  {
+    "jobid": "200044210",
+    "role_name": "Firmware Engineer II",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556939441"
+  },
+  {
+    "jobid": "200030314",
+    "role_name": "Firmware Engineer II",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556825143"
+  },
+  {
+    "jobid": "200041369",
+    "role_name": "Principal Product Design Manager",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556913765"
+  },
+  {
+    "jobid": "200043886",
+    "role_name": "Senior Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556938528"
   },
   {
     "jobid": "200043120",
@@ -20,49 +55,79 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928541"
   },
   {
+    "jobid": "200011746",
+    "role_name": "Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556636678"
+  },
+  {
+    "jobid": "200040343",
+    "role_name": "Service Engineer 2",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556874996"
+  },
+  {
     "jobid": "200037096",
     "role_name": "Consultant - Apps Full Stack Engineer A2",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864900"
   },
   {
-    "jobid": "200043479",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556932894"
+    "jobid": "200043197",
+    "role_name": "Software Engineering Manager (AI-native development)",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928824"
   },
   {
-    "jobid": "200043299",
-    "role_name": "Senior Physical Design Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929134"
+    "jobid": "200037087",
+    "role_name": "Software Engineer II- GitHub India",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864884"
   },
   {
-    "jobid": "200041359",
-    "role_name": "Senior Software Engineer - Firmware + Audio",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556913310"
+    "jobid": "200043877",
+    "role_name": "Software Engineer II",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556938469"
   },
   {
-    "jobid": "200043292",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929044"
+    "jobid": "200043531",
+    "role_name": "Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556933677"
   },
   {
-    "jobid": "200020116",
-    "role_name": "Senior Consultant - (Dotnet + AI - Full stack)",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556657610"
+    "jobid": "200037177",
+    "role_name": "Service Engineer II",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556865811"
   },
   {
-    "jobid": "200043111",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928460"
+    "jobid": "200042523",
+    "role_name": "Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556925493"
   },
   {
-    "jobid": "200043130",
-    "role_name": "Principal Physical Design Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928651"
+    "jobid": "200043374",
+    "role_name": "Senior Firmware Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929432"
   },
   {
-    "jobid": "200037098",
-    "role_name": "Sr Consultant - Infra",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864903"
+    "jobid": "200042861",
+    "role_name": "Principal Software Engineering Manager",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556927147"
+  },
+  {
+    "jobid": "200043298",
+    "role_name": "Principal Firmware Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929117"
+  },
+  {
+    "jobid": "200043410",
+    "role_name": "Principal Firmware Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556930689"
+  },
+  {
+    "jobid": "200043196",
+    "role_name": "Software Engineer (AI-native development)",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928825"
+  },
+  {
+    "jobid": "200043554",
+    "role_name": "Principal Firmware Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556937130"
   },
   {
     "jobid": "200042668",
@@ -70,19 +135,49 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556925983"
   },
   {
-    "jobid": "200037024",
-    "role_name": "Senior Consultant, AI Business Solutions",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864675"
+    "jobid": "200038916",
+    "role_name": "Senior Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556870731"
   },
   {
-    "jobid": "200037009",
-    "role_name": "Consultant, AI Business Solutions",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864631"
+    "jobid": "200043319",
+    "role_name": "Principal Design Verification Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929254"
   },
   {
-    "jobid": "200037087",
-    "role_name": "Software Engineer II- GitHub India",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864884"
+    "jobid": "200043299",
+    "role_name": "Senior Physical Design Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556929134"
+  },
+  {
+    "jobid": "200043130",
+    "role_name": "Principal Physical Design Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928651"
+  },
+  {
+    "jobid": "200043538",
+    "role_name": "Senior Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556934083"
+  },
+  {
+    "jobid": "200043240",
+    "role_name": "Software Engineer II",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556928905"
+  },
+  {
+    "jobid": "200043477",
+    "role_name": "Senior Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556932884"
+  },
+  {
+    "jobid": "200041359",
+    "role_name": "Senior Software Engineer - Firmware + Audio",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556913310"
+  },
+  {
+    "jobid": "200020116",
+    "role_name": "Senior Consultant - (Dotnet + AI - Full stack)",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556657610"
   },
   {
     "jobid": "200039137",
@@ -100,44 +195,19 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864914"
   },
   {
-    "jobid": "200027168",
-    "role_name": "Principal Software Engineering",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556754329"
-  },
-  {
-    "jobid": "200041779",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556917521"
-  },
-  {
-    "jobid": "200042118",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556919024"
-  },
-  {
-    "jobid": "200040343",
-    "role_name": "Service Engineer 2",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556874996"
-  },
-  {
-    "jobid": "200040346",
-    "role_name": "Service Engineer 2",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556874998"
-  },
-  {
     "jobid": "200042240",
     "role_name": "Researcher-MSR",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556923987"
   },
   {
-    "jobid": "200041919",
-    "role_name": "Principal Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556918245"
-  },
-  {
     "jobid": "200042242",
     "role_name": "Research Software Development Engineer-MSR",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556923990"
+  },
+  {
+    "jobid": "200041919",
+    "role_name": "Principal Software Engineer",
+    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556918245"
   },
   {
     "jobid": "200041926",
@@ -180,24 +250,9 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556913271"
   },
   {
-    "jobid": "200036238",
-    "role_name": "Principal Software Engineering Manager",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556862502"
-  },
-  {
-    "jobid": "200040970",
-    "role_name": "Principal Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556899259"
-  },
-  {
     "jobid": "200037085",
     "role_name": "Senior Software Engineer-GitHub India",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556864881"
-  },
-  {
-    "jobid": "200036463",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556863025"
   },
   {
     "jobid": "200038055",
@@ -215,29 +270,14 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556873534"
   },
   {
-    "jobid": "200039096",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556872249"
-  },
-  {
     "jobid": "200039495",
     "role_name": "Principal Software Engineer",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556873176"
   },
   {
-    "jobid": "200039801",
-    "role_name": "Principal Software Engineering Manager",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556873812"
-  },
-  {
     "jobid": "200035738",
     "role_name": "Principal Software Engineer",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556861178"
-  },
-  {
-    "jobid": "200038057",
-    "role_name": "Principal Software Engineer- GitHub India",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556868378"
   },
   {
     "jobid": "200026160",
@@ -255,11 +295,6 @@
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556862761"
   },
   {
-    "jobid": "200036074",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556862169"
-  },
-  {
     "jobid": "200035932",
     "role_name": "Principal Software Engineering Manager",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556861660"
@@ -273,21 +308,6 @@
     "jobid": "200010352",
     "role_name": "Principal Software Engineering Manager",
     "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556630784"
-  },
-  {
-    "jobid": "200032907",
-    "role_name": "Principal Search Architect",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556851940"
-  },
-  {
-    "jobid": "200031232",
-    "role_name": "Senior Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556834327"
-  },
-  {
-    "jobid": "200022328",
-    "role_name": "Software Engineer",
-    "job_listing_link": "https://apply.careers.microsoft.com/careers/job/1970393556745075"
   },
   {
     "jobid": "200021988",

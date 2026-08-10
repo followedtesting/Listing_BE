@@ -32,6 +32,7 @@ from adapters.everpure_portal import EverpurePortalAdapter
 from adapters.thomson_reuters_portal import ThomsonReutersPortalAdapter
 from adapters.netapp_portal import NetAppPortalAdapter
 from adapters.fnz_portal import FNZPortalAdapter
+from adapters.atlassian_portal import AtlassianPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -74,6 +75,7 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     ThomsonReutersPortalAdapter(),
     NetAppPortalAdapter(),
     FNZPortalAdapter(),
+    AtlassianPortalAdapter(),
 ]
 
 app = FastAPI(
