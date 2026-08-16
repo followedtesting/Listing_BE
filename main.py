@@ -33,6 +33,10 @@ from adapters.thomson_reuters_portal import ThomsonReutersPortalAdapter
 from adapters.netapp_portal import NetAppPortalAdapter
 from adapters.fnz_portal import FNZPortalAdapter
 from adapters.atlassian_portal import AtlassianPortalAdapter
+from adapters.jpmc_portal import JPMCPortalAdapter
+from adapters.oracle_portal import OraclePortalAdapter
+from adapters.amex_portal import AmexPortalAdapter
+from adapters.intuit_portal import IntuitPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -76,6 +80,10 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     NetAppPortalAdapter(),
     FNZPortalAdapter(),
     AtlassianPortalAdapter(),
+    JPMCPortalAdapter(),
+    OraclePortalAdapter(),
+    AmexPortalAdapter(),
+    IntuitPortalAdapter(),
 ]
 
 app = FastAPI(
