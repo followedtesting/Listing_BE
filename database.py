@@ -40,6 +40,19 @@ class NewJobListingModel(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AdapterRunModel(Base):
+    """
+    Stores the last execution run status and timestamp for each adapter/portal in NeonDB.
+    """
+    __tablename__ = "adapter_runs"
+
+    portal_id = Column(String(100), primary_key=True, index=True)
+    last_run_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    status = Column(String(20), nullable=False)  # 'success' or 'failed'
+    error_message = Column(Text, nullable=True)
+    last_scraped_count = Column(Integer, default=0)
+
+
 engine = None
 SessionLocal = None
 
