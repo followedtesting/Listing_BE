@@ -113,11 +113,13 @@ async def scrape_portal_task(adapter: BaseJobAdapter) -> None:
         del current_listings
         
         new_listings = JobStorage.diff_and_update(adapter.portal_id, listings_data)
+        JobStorage.save_run_status(adapter.portal_id, status="success", scraped_count=len(listings_data))
         del listings_data
         del new_listings
         logger.info(f"Background scrape complete for '{adapter.portal_name}'.")
     except Exception as e:
         logger.error(f"Error in background scrape task for '{adapter.portal_name}': {e}", exc_info=True)
+        JobStorage.save_run_status(adapter.portal_id, status="failed", error_message=str(e))
     finally:
         gc.collect()
 
@@ -141,15 +143,8 @@ def get_root():
 
 @app.get("/portals")
 def get_portals():
-    """Retrieves metadata of all active job portals including their stored listing counts."""
-    return [
-        {
-            "id": a.portal_id,
-            "name": a.portal_name,
-            "current_listings_count": len(JobStorage.get_previous_listings(a.portal_id)),
-            "new_listings_count": len(JobStorage.get_new_listings(a.portal_id))
-        } for a in ACTIVE_ADAPTERS
-    ]
+    """Retrieves metadata of all active job portals including their stored listing counts and last run status."""
+    return JobStorage.get_all_portals_metadata(ACTIVE_ADAPTERS)
 
 @app.get("/listings/{portal_id}")
 def get_stored_listings(portal_id: str):
@@ -206,6 +201,8 @@ async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool
             total_scraped = len(listings_data)
             new_count = len(new_listings)
             
+            JobStorage.save_run_status(adapter.portal_id, status="success", scraped_count=total_scraped)
+            
             del listings_data
             del new_listings
             
@@ -217,6 +214,7 @@ async def trigger_scrape_all(background_tasks: BackgroundTasks, background: bool
             logger.info(f"Finished scraping '{adapter.portal_name}'. Total: {total_scraped}, New: {new_count}")
         except Exception as e:
             logger.error(f"Error executing scrape for '{adapter.portal_name}': {e}", exc_info=True)
+            JobStorage.save_run_status(adapter.portal_id, status="failed", error_message=str(e))
             results[adapter.portal_id] = {
                 "portal_name": adapter.portal_name,
                 "status": "error",
@@ -247,6 +245,8 @@ async def trigger_scrape_single(portal_id: str):
         total_scraped = len(listings_data)
         new_count = len(new_listings)
         
+        JobStorage.save_run_status(adapter.portal_id, status="success", scraped_count=total_scraped)
+        
         del listings_data
         
         return {
@@ -258,6 +258,7 @@ async def trigger_scrape_single(portal_id: str):
         }
     except Exception as e:
         logger.error(f"Error scraping single portal '{portal_id}': {e}", exc_info=True)
+        JobStorage.save_run_status(adapter.portal_id, status="failed", error_message=str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         gc.collect()
@@ -295,6 +296,8 @@ async def trigger_scrape_sequential():
             total_scraped = len(listings_data)
             new_count = len(new_listings)
             
+            JobStorage.save_run_status(adapter.portal_id, status="success", scraped_count=total_scraped)
+
             # Determine items for email digest:
             # Only new listings, OR all current listings if both new and old were zero earlier
             if was_both_zero_earlier:
@@ -323,6 +326,7 @@ async def trigger_scrape_sequential():
             logger.info(f"Finished sequential scrape for '{adapter.portal_name}'. Total: {total_scraped}, New: {new_count}, Both zero earlier: {was_both_zero_earlier}")
         except Exception as e:
             logger.error(f"Error during sequential scrape for '{adapter.portal_name}': {e}", exc_info=True)
+            JobStorage.save_run_status(adapter.portal_id, status="failed", error_message=str(e))
             report_entry = {
                 "portal_id": adapter.portal_id,
                 "portal_name": adapter.portal_name,
