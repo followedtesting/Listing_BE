@@ -38,6 +38,7 @@ from adapters.oracle_portal import OraclePortalAdapter
 from adapters.amex_portal import AmexPortalAdapter
 from adapters.intuit_portal import IntuitPortalAdapter
 from adapters.lseg_portal import LSEGPortalAdapter
+from adapters.opentext_portal import OpenTextPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -86,6 +87,7 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     AmexPortalAdapter(),
     IntuitPortalAdapter(),
     LSEGPortalAdapter(),
+    OpenTextPortalAdapter(),
 ]
 
 app = FastAPI(
