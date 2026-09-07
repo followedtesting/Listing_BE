@@ -39,6 +39,23 @@ from adapters.amex_portal import AmexPortalAdapter
 from adapters.intuit_portal import IntuitPortalAdapter
 from adapters.lseg_portal import LSEGPortalAdapter
 from adapters.opentext_portal import OpenTextPortalAdapter
+from adapters.databricks_portal import DatabricksPortalAdapter
+from adapters.paytm_portal import PaytmPortalAdapter
+from adapters.amadeus_portal import AmadeusPortalAdapter
+from adapters.phonepe_portal import PhonePePortalAdapter
+from adapters.citi_portal import CitiPortalAdapter
+from adapters.maersk_portal import MaerskPortalAdapter
+from adapters.fractal_portal import FractalPortalAdapter
+from adapters.cvent_portal import CventPortalAdapter
+from adapters.cadence_portal import CadencePortalAdapter
+from adapters.expedia_portal import ExpediaPortalAdapter
+from adapters.wellsfargo_portal import WellsFargoPortalAdapter
+from adapters.innovaccer_portal import InnovaccerPortalAdapter
+from adapters.uhg_portal import UHGPortalAdapter
+from adapters.nvidia_portal import NvidiaPortalAdapter
+from adapters.amd_portal import AMDPortalAdapter
+from adapters.bcg_portal import BCGPortalAdapter
+from adapters.ibm_portal import IBMPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -88,6 +105,23 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     IntuitPortalAdapter(),
     LSEGPortalAdapter(),
     OpenTextPortalAdapter(),
+    DatabricksPortalAdapter(),
+    PaytmPortalAdapter(),
+    AmadeusPortalAdapter(),
+    PhonePePortalAdapter(),
+    CitiPortalAdapter(),
+    MaerskPortalAdapter(),
+    FractalPortalAdapter(),
+    CventPortalAdapter(),
+    CadencePortalAdapter(),
+    ExpediaPortalAdapter(),
+    WellsFargoPortalAdapter(),
+    InnovaccerPortalAdapter(),
+    UHGPortalAdapter(),
+    NvidiaPortalAdapter(),
+    AMDPortalAdapter(),
+    BCGPortalAdapter(),
+    IBMPortalAdapter(),
 ]
 
 app = FastAPI(
