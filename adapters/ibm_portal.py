@@ -23,7 +23,18 @@ class IBMPortalAdapter(BaseJobAdapter):
         seen_ids = set()
         
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            # Low-memory launch configuration for 512MB RAM servers
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--single-process",
+                    "--disable-gpu",
+                    "--no-zygote"
+                ]
+            )
             try:
                 user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 context = await browser.new_context(
@@ -31,16 +42,19 @@ class IBMPortalAdapter(BaseJobAdapter):
                     viewport={"width": 1280, "height": 800}
                 )
                 page = await context.new_page()
+
+                # Abort images, media, fonts, and stylesheets to save ~85% RAM
+                await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font", "stylesheet"] else route.continue_())
                 
                 try:
                     await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
                 except Exception as nav_err:
                     logger.warning(f"Non-fatal navigation warning/timeout: {nav_err}")
                     
-                await page.wait_for_timeout(5000)
+                await page.wait_for_timeout(4000)
                 
                 page_num = 1
-                max_pages = 20
+                max_pages = 15
                 
                 while page_num <= max_pages:
                     logger.info(f"Scraping IBM Careers page {page_num}")
@@ -107,11 +121,13 @@ class IBMPortalAdapter(BaseJobAdapter):
                     
                     if next_clicked:
                         logger.info("Navigating via Next button (JS)...")
-                        await page.wait_for_timeout(6000)
+                        await page.wait_for_timeout(4000)
                         page_num += 1
                     else:
                         logger.info("No next button found. Terminating pagination.")
                         break
+
+
                     
             except Exception as e:
                 logger.error(f"Failed to scrape IBM Careers Portal: {e}", exc_info=True)
@@ -121,3 +137,4 @@ class IBMPortalAdapter(BaseJobAdapter):
                 
         logger.info(f"Finished IBM Careers scrape. Found total {len(listings)} listings.")
         return listings
+
