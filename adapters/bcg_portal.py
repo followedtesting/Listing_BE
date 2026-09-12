@@ -1,8 +1,10 @@
 import logging
+import json
+import ssl
+import re
+import urllib.request
 from typing import List
-from playwright.async_api import async_playwright
 from adapters.base import BaseJobAdapter, JobListing
-import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -16,143 +18,86 @@ class BCGPortalAdapter(BaseJobAdapter):
         return "BCG Careers Portal"
 
     async def scrape(self) -> List[JobListing]:
-        # Using query parameters that PhenomPeople usually accepts
-        base_url = "https://careers.bcg.com/global/en/search-results?category=Technology%20and%20Engineering&country=India"
-        logger.info(f"Navigating to BCG Careers page to scrape listings.")
-        
+        logger.info("Fetching BCG Careers via direct HTTP request & phApp.ddo JSON parsing...")
+
         listings: List[JobListing] = []
         seen_ids = set()
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            try:
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-                context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800}
-                )
-                page = await context.new_page()
-                
-                # Navigate
-                try:
-                    await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
-                except Exception as nav_err:
-                    logger.warning(f"Non-fatal navigation warning/timeout: {nav_err}")
-                    
-                await page.wait_for_timeout(5000)
-                
-                # Click the filters via JavaScript to entirely bypass cookie overlays or intercepts
-                try:
-                    logger.info("Applying Category filter via JS...")
-                    await page.evaluate("""() => {
-                        let labels = Array.from(document.querySelectorAll('label'));
-                        let tech = labels.find(l => l.innerText.includes('Technology and Engineering'));
-                        if (tech) tech.click();
-                    }""")
-                    await page.wait_for_timeout(2000)
-                except Exception as e:
-                    logger.warning(f"Could not select Category filter: {e}")
 
-                try:
-                    logger.info("Applying Country filter via JS...")
-                    await page.evaluate("""() => {
-                        let labels = Array.from(document.querySelectorAll('label'));
-                        let india = labels.find(l => l.innerText.includes('India'));
-                        if (india) india.click();
-                    }""")
-                    await page.wait_for_timeout(4000)
-                except Exception as e:
-                    logger.warning(f"Could not select Country filter: {e}")
-                
-                # Check for pagination
-                page_num = 1
-                max_pages = 20
-                
-                while page_num <= max_pages:
-                    logger.info(f"Scraping BCG Careers page {page_num}")
-                    
-                    # Instead of relying on URL parameter changes for SPA, we extract links
-                    # then click the "Next" button.
-                    links = await page.query_selector_all("a")
-                    page_listings_count = 0
-                    duplicate_found = False
-                    
-                    for link in links:
-                        href = await link.get_attribute("href")
-                        title = await link.inner_text()
-                        
-                        if href and title and "/job/" in href.lower():
-                            href_clean = href.strip()
-                            title_clean = title.strip().replace("\n", " ")
-                            
-                            # Skip common Phenom non-job links
-                            if title_clean.isdigit() or title_clean.lower() in ["next", "saved jobs", "jobs", "clear filters", "apply", "save job"]:
-                                continue
-                                
-                            parts = href_clean.split("/")
-                            jobid = ""
-                            
-                            # Usually BCG jobs have format /job/REQ12345/job-title or similar
-                            for p_item in parts:
-                                if "?" in p_item:
-                                    p_item = p_item.split("?")[0]
-                                if "REQ" in p_item.upper() or p_item.isdigit():
-                                    jobid = p_item
-                                    break
-                                    
-                            if not jobid:
-                                jobid = parts[-2] if parts[-1] == "" else parts[-1]
-                                
-                            if jobid and title_clean:
-                                if jobid in seen_ids:
-                                    continue
-                                    
-                                seen_ids.add(jobid)
-                                page_listings_count += 1
-                                
-                                if href_clean.startswith("http"):
-                                    job_listing_link = href_clean
-                                else:
-                                    if not href_clean.startswith("/"):
-                                        href_clean = "/" + href_clean
-                                    job_listing_link = f"https://careers.bcg.com{href_clean}"
-                                    
-                                listings.append(
-                                    JobListing(
-                                        jobid=jobid.strip(),
-                                        role_name=title_clean,
-                                        job_listing_link=job_listing_link
-                                    )
-                                )
-                                
-                    if duplicate_found or page_listings_count == 0:
-                        logger.info("Reached end of distinct listings.")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        offset = 0
+        max_pages = 20
+
+        try:
+            while offset < 1000 and max_pages > 0:
+                max_pages -= 1
+                url = f"https://careers.bcg.com/global/en/search-results?category=Technology%20and%20Engineering&country=India&from={offset}&s=1"
+                logger.info(f"Fetching BCG Careers at offset {offset}: {url}")
+
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"BCG URL returned HTTP {resp.status}. Ending pagination.")
                         break
-                        
-                    logger.info(f"Found {page_listings_count} job postings on page {page_num}.")
-                    
-                    # Attempt click pagination via JS
-                    next_clicked = await page.evaluate("""() => {
-                        let nextBtn = document.querySelector("a.next, li.next a, button.next, a[aria-label*='Next']");
-                        if (nextBtn && nextBtn.style.display !== 'none' && !nextBtn.className.includes('disabled')) {
-                            nextBtn.click();
-                            return true;
-                        }
-                        return false;
-                    }""")
-                    
-                    if next_clicked:
-                        logger.info("Navigating via Next button (JS)...")
-                        await page.wait_for_timeout(6000)
-                        page_num += 1
+                    html_content = resp.read().decode("utf-8")
+
+                match = re.search(r'phApp\.ddo\s*=\s*({.*?});\s*phApp', html_content, re.DOTALL)
+                if not match:
+                    logger.warning(f"Could not locate phApp.ddo JSON block in BCG response HTML at offset {offset}.")
+                    break
+
+                ddo_json = json.loads(match.group(1))
+                eager = ddo_json.get("eagerLoadRefineSearch", {})
+                jobs = eager.get("data", {}).get("jobs", [])
+                total_hits = eager.get("totalHits", 0)
+
+                if not jobs:
+                    break
+
+                new_on_page = 0
+                for j in jobs:
+                    job_id = str(j.get("reqId") or j.get("jobId") or "").strip()
+                    title = str(j.get("title") or "").strip().replace("\n", " ")
+
+                    if not job_id or not title or job_id in seen_ids:
+                        continue
+
+                    seen_ids.add(job_id)
+                    new_on_page += 1
+
+                    position_url = j.get("positionUrl") or j.get("applyUrl") or ""
+                    if position_url and position_url.startswith("http"):
+                        link = position_url
+                    elif position_url:
+                        link = f"https://careers.bcg.com{position_url if position_url.startswith('/') else '/' + position_url}"
                     else:
-                        break
-                    
-            except Exception as e:
-                logger.error(f"Failed to scrape BCG Careers Portal: {e}", exc_info=True)
-                raise
-            finally:
-                await browser.close()
-                
+                        link = f"https://careers.bcg.com/global/en/job/{job_id}"
+
+                    listings.append(
+                        JobListing(
+                            jobid=job_id,
+                            role_name=title,
+                            job_listing_link=link
+                        )
+                    )
+
+                logger.info(f"Fetched {new_on_page} new BCG jobs at offset {offset} (total hits: {total_hits}).")
+
+                if new_on_page == 0 or offset + len(jobs) >= total_hits:
+                    break
+
+                offset += len(jobs)
+
+        except Exception as e:
+            logger.error(f"Failed to scrape BCG Careers Portal: {e}", exc_info=True)
+            raise
+
         logger.info(f"Finished BCG Careers scrape. Found total {len(listings)} listings.")
         return listings
+
