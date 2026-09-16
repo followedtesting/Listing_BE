@@ -33,8 +33,8 @@ class AdobePortalAdapter(BaseJobAdapter):
         ctx.verify_mode = ssl.CERT_NONE
 
         offset = 0
-        limit = 50
-        max_pages = 20
+        limit = 200  # Fetch up to 200 listings in a single atomic call to avoid Phenom offset pagination tie-breaking shifts
+        max_pages = 5
 
         while len(listings) < 1000 and max_pages > 0:
             max_pages -= 1
@@ -127,4 +127,5 @@ class AdobePortalAdapter(BaseJobAdapter):
 
         logger.info(f"Finished Adobe Careers scrape. Found total {len(listings)} listings.")
         return listings
+
 
