@@ -56,6 +56,14 @@ from adapters.nvidia_portal import NvidiaPortalAdapter
 from adapters.amd_portal import AMDPortalAdapter
 from adapters.bcg_portal import BCGPortalAdapter
 from adapters.ibm_portal import IBMPortalAdapter
+from adapters.morgan_stanley_portal import MorganStanleyPortalAdapter
+from adapters.mckinsey_portal import McKinseyPortalAdapter
+from adapters.sprinklr_portal import SprinklrPortalAdapter
+from adapters.bank_of_america_portal import BankOfAmericaPortalAdapter
+from adapters.tiger_analytics_portal import TigerAnalyticsPortalAdapter
+from adapters.paypal_portal import PaypalPortalAdapter
+from adapters.google_portal import GooglePortalAdapter
+from adapters.bakerhughes_portal import BakerHughesPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -122,6 +130,14 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     AMDPortalAdapter(),
     BCGPortalAdapter(),
     IBMPortalAdapter(),
+    MorganStanleyPortalAdapter(),
+    McKinseyPortalAdapter(),
+    SprinklrPortalAdapter(),
+    BankOfAmericaPortalAdapter(),
+    TigerAnalyticsPortalAdapter(),
+    PaypalPortalAdapter(),
+    GooglePortalAdapter(),
+    BakerHughesPortalAdapter(),
 ]
 
 app = FastAPI(
