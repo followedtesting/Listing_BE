@@ -64,6 +64,10 @@ from adapters.tiger_analytics_portal import TigerAnalyticsPortalAdapter
 from adapters.paypal_portal import PaypalPortalAdapter
 from adapters.google_portal import GooglePortalAdapter
 from adapters.bakerhughes_portal import BakerHughesPortalAdapter
+from adapters.ericsson_portal import EricssonPortalAdapter
+from adapters.siemens_portal import SiemensPortalAdapter
+from adapters.ust_portal import USTPortalAdapter
+from adapters.bain_portal import BainPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -138,6 +142,10 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     PaypalPortalAdapter(),
     GooglePortalAdapter(),
     BakerHughesPortalAdapter(),
+    EricssonPortalAdapter(),
+    SiemensPortalAdapter(),
+    USTPortalAdapter(),
+    BainPortalAdapter(),
 ]
 
 app = FastAPI(
