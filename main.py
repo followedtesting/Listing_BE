@@ -68,6 +68,10 @@ from adapters.ericsson_portal import EricssonPortalAdapter
 from adapters.siemens_portal import SiemensPortalAdapter
 from adapters.ust_portal import USTPortalAdapter
 from adapters.bain_portal import BainPortalAdapter
+from adapters.pitney_bowes_portal import PitneyBowesPortalAdapter
+from adapters.docusign_portal import DocuSignPortalAdapter
+from adapters.rippling_portal import RipplingPortalAdapter
+from adapters.stripe_portal import StripePortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -146,6 +150,10 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     SiemensPortalAdapter(),
     USTPortalAdapter(),
     BainPortalAdapter(),
+    PitneyBowesPortalAdapter(),
+    DocuSignPortalAdapter(),
+    RipplingPortalAdapter(),
+    StripePortalAdapter(),
 ]
 
 app = FastAPI(

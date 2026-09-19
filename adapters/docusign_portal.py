@@ -5,18 +5,18 @@ from adapters.base import BaseJobAdapter, JobListing
 
 logger = logging.getLogger(__name__)
 
-class AMDPortalAdapter(BaseJobAdapter):
+class DocuSignPortalAdapter(BaseJobAdapter):
     @property
     def portal_id(self) -> str:
-        return "amd_careers"
+        return "docusign_careers"
 
     @property
     def portal_name(self) -> str:
-        return "AMD Careers Portal"
+        return "DocuSign Careers Portal"
 
     async def scrape(self) -> List[JobListing]:
-        base_url = "https://careers.amd.com/api/jobs"
-        logger.info(f"Fetching AMD Careers job listings via REST API: {base_url}")
+        base_url = "https://careers.docusign.com/api/jobs"
+        logger.info(f"Fetching DocuSign Careers listings via REST API: {base_url}")
 
         headers = {
             "User-Agent": (
@@ -29,29 +29,29 @@ class AMDPortalAdapter(BaseJobAdapter):
         listings: List[JobListing] = []
         seen_ids = set()
         page = 1
-        max_pages = 50
+        max_pages = 30
 
         async with AsyncSession(impersonate="chrome120") as session:
             while page <= max_pages:
                 params = {
-                    "country": "India",
+                    "locations": "Bengaluru,Karnataka,India",
                     "categories": "Engineering",
                     "page": page,
                     "sortBy": "relevance",
                     "descending": "false",
                     "internal": ""
                 }
-                
+
                 try:
                     resp = await session.get(base_url, params=params, headers=headers, timeout=30)
                     if resp.status_code != 200:
-                        logger.warning(f"AMD API returned non-200 status code {resp.status_code} on page {page}.")
+                        logger.warning(f"DocuSign API returned status {resp.status_code} on page {page}.")
                         break
 
                     data = resp.json()
                     raw_jobs = data.get("jobs", [])
                     if not raw_jobs:
-                        logger.info(f"No more jobs returned on page {page}.")
+                        logger.info(f"No more jobs on page {page}.")
                         break
 
                     new_on_page = 0
@@ -67,7 +67,7 @@ class AMDPortalAdapter(BaseJobAdapter):
                         if canonical:
                             link = canonical
                         elif req_id:
-                            link = f"https://careers.amd.com/careers-home/jobs/{req_id}"
+                            link = f"https://careers.docusign.com/careers-home/jobs/{req_id}"
                         else:
                             continue
 
@@ -85,7 +85,7 @@ class AMDPortalAdapter(BaseJobAdapter):
                             )
 
                     total_count = data.get("totalCount", 0)
-                    logger.info(f"AMD Page {page}: Fetched {len(raw_jobs)} raw jobs ({new_on_page} new). Total count: {total_count}")
+                    logger.info(f"DocuSign Page {page}: Fetched {len(raw_jobs)} raw jobs ({new_on_page} new). Total count: {total_count}")
 
                     if len(raw_jobs) < 10 or page * 10 >= total_count:
                         break
@@ -93,8 +93,8 @@ class AMDPortalAdapter(BaseJobAdapter):
                     page += 1
 
                 except Exception as page_err:
-                    logger.error(f"Error fetching AMD API page {page}: {page_err}", exc_info=True)
+                    logger.error(f"Error fetching DocuSign API page {page}: {page_err}", exc_info=True)
                     break
 
-        logger.info(f"Finished AMD Careers scrape. Total {len(listings)} listings fetched.")
+        logger.info(f"Finished DocuSign Careers scrape. Found total {len(listings)} listings.")
         return listings
