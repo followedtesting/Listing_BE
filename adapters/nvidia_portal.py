@@ -1,7 +1,6 @@
 import logging
-import json
 from typing import List
-from playwright.async_api import async_playwright
+from curl_cffi.requests import AsyncSession
 from adapters.base import BaseJobAdapter, JobListing
 
 logger = logging.getLogger(__name__)
@@ -16,32 +15,27 @@ class NvidiaPortalAdapter(BaseJobAdapter):
         return "NVIDIA Careers Portal"
 
     async def scrape(self) -> List[JobListing]:
-        # Base URL to establish cookies, CORS context and session parameters
-        base_url = "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"
-        logger.info(f"Navigating to NVIDIA Careers page to establish session context: {base_url}")
-        
+        api_url = "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs"
+        logger.info(f"Fetching NVIDIA Careers listings via Workday CXS API: {api_url}")
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+        }
+
         listings: List[JobListing] = []
         seen_ids = set()
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+        offset = 0
+        limit = 20
+        total_jobs = None
+
+        async with AsyncSession(impersonate="chrome120") as session:
             try:
-                page = await browser.new_page()
-                
-                # Navigate to the search page to load session cookies
-                await page.goto(base_url, wait_until="load")
-                
-                # Wait for page to initialize completely
-                await page.wait_for_timeout(3000)
-                
-                offset = 0
-                limit = 20
-                max_safety_limit = 200  # Avoid runaway loop
-                
-                while offset < max_safety_limit:
-                    logger.info(f"Fetching NVIDIA careers listings starting at offset {offset}...")
-                    
-                    # Prepare POST request payload with exact filters
+                while True:
                     payload = {
                         "appliedFacets": {
                             "locationHierarchy1": ["2fcb99c455831013ea52b82135ba3266"],
@@ -51,94 +45,55 @@ class NvidiaPortalAdapter(BaseJobAdapter):
                         "offset": offset,
                         "searchText": ""
                     }
-                    
-                    # Execute fetch via page.evaluate
-                    result = await page.evaluate(f"""
-                        async () => {{
-                            try {{
-                                const response = await fetch('/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs', {{
-                                    method: 'POST',
-                                    headers: {{
-                                        'Content-Type': 'application/json',
-                                        'Accept': 'application/json'
-                                    }},
-                                    body: JSON.stringify({json.dumps(payload)})
-                                }});
-                                if (!response.ok) {{
-                                    return {{ error: `HTTP status ${{response.status}}` }};
-                                }}
-                                return await response.json();
-                            }} catch (err) {{
-                                return {{ error: err.message }};
-                            }}
-                        }}
-                    """)
-                    
-                    if not result:
-                        logger.warning(f"NVIDIA Careers API call at offset {offset} returned empty result.")
+
+                    resp = await session.post(api_url, json=payload, headers=headers, timeout=30)
+                    if resp.status_code != 200:
+                        logger.warning(f"NVIDIA Workday API returned non-200 status code {resp.status_code} at offset {offset}.")
                         break
-                        
-                    if "error" in result and result["error"]:
-                        logger.error(f"Error fetching from NVIDIA API at offset {offset}: {result['error']}")
+
+                    data = resp.json()
+                    if total_jobs is None:
+                        total_jobs = data.get("total", 0)
+
+                    postings = data.get("jobPostings", [])
+                    logger.info(f"Retrieved {len(postings)} job postings from NVIDIA Workday API (offset {offset}, total {total_jobs}).")
+
+                    if not postings:
                         break
-                        
-                    job_postings = result.get("jobPostings", [])
-                    if not job_postings or len(job_postings) == 0:
-                        logger.info(f"No more jobs found in NVIDIA response at offset {offset}. Stopping pagination.")
-                        break
-                        
-                    logger.info(f"Retrieved {len(job_postings)} job postings from NVIDIA Careers at offset {offset}.")
-                    
-                    duplicate_found = False
-                    for job in job_postings:
-                        title = job.get("title", "")
-                        ext_path = job.get("externalPath", "")
+
+                    new_on_page = 0
+                    for job in postings:
+                        title = (job.get("title") or "").strip()
+                        ext_path = (job.get("externalPath") or "").strip()
                         bullet_fields = job.get("bulletFields", [])
-                        
-                        # Get jobid from bulletFields list's first member if length > 0
-                        jobid = ""
-                        if bullet_fields and len(bullet_fields) > 0:
-                            jobid = str(bullet_fields[0]).strip()
-                            
-                        # If jobid is not found, fallback to parsing/extracting from externalPath
-                        if not jobid:
-                            if "_" in ext_path:
-                                jobid = ext_path.split("_")[-1]
-                            else:
-                                jobid = ext_path.split("/")[-1]
-                        
-                        if jobid in seen_ids:
-                            logger.info(f"Encountered duplicate jobid '{jobid}' (reached end of distinct postings). Stopping pagination.")
-                            duplicate_found = True
-                            break
-                            
-                        seen_ids.add(jobid)
-                        
-                        # Build absolute URL from externalPath
+                        req_id = bullet_fields[0] if bullet_fields else ""
+
+                        jobid = str(req_id).strip() if req_id else (ext_path.split("_")[-1] if "_" in ext_path else ext_path.split("/")[-1])
+
                         if ext_path.startswith("http"):
                             job_listing_link = ext_path
                         else:
                             job_listing_link = f"https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite{ext_path}"
-                            
-                        if jobid and title and job_listing_link:
+
+                        if jobid and title and jobid not in seen_ids:
+                            seen_ids.add(jobid)
+                            new_on_page += 1
                             listings.append(
                                 JobListing(
-                                    jobid=jobid.strip(),
-                                    role_name=title.strip(),
-                                    job_listing_link=job_listing_link.strip()
+                                    jobid=jobid,
+                                    role_name=title,
+                                    job_listing_link=job_listing_link
                                 )
                             )
-                            
-                    if duplicate_found:
+
+                    if len(postings) < limit or offset + len(postings) >= (total_jobs or 0):
                         break
-                        
+
                     offset += limit
-                    
+
             except Exception as e:
                 logger.error(f"Failed to scrape NVIDIA Careers Portal: {e}", exc_info=True)
                 raise
-            finally:
-                await browser.close()
-                
+
         logger.info(f"Finished NVIDIA Careers scrape. Found total {len(listings)} listings.")
         return listings
