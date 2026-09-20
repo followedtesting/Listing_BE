@@ -72,6 +72,13 @@ from adapters.pitney_bowes_portal import PitneyBowesPortalAdapter
 from adapters.docusign_portal import DocuSignPortalAdapter
 from adapters.rippling_portal import RipplingPortalAdapter
 from adapters.stripe_portal import StripePortalAdapter
+from adapters.micron_portal import MicronPortalAdapter
+from adapters.bytedance_portal import ByteDancePortalAdapter
+from adapters.grab_portal import GrabPortalAdapter
+from adapters.shopee_portal import ShopeePortalAdapter
+from adapters.agoda_portal import AgodaPortalAdapter
+from adapters.revolut_portal import RevolutPortalAdapter
+from adapters.okx_portal import OKXPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -154,6 +161,13 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     DocuSignPortalAdapter(),
     RipplingPortalAdapter(),
     StripePortalAdapter(),
+    MicronPortalAdapter(),
+    ByteDancePortalAdapter(),
+    GrabPortalAdapter(),
+    ShopeePortalAdapter(),
+    AgodaPortalAdapter(),
+    RevolutPortalAdapter(),
+    OKXPortalAdapter(),
 ]
 
 app = FastAPI(
