@@ -18,11 +18,25 @@ class RevolutPortalAdapter(BaseJobAdapter):
         return "Revolut Careers Portal"
 
     async def scrape(self) -> List[JobListing]:
-        url = "https://www.revolut.com/en-IN/careers/?team=Engineering"
+        urls = [
+            "https://www.revolut.com/en-IN/careers/?team=Engineering",
+            "https://www.revolut.com/en-US/careers/?team=Engineering",
+            "https://www.revolut.com/en-GB/careers/?team=Engineering",
+        ]
+
         headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
         listings: List[JobListing] = []
@@ -31,74 +45,80 @@ class RevolutPortalAdapter(BaseJobAdapter):
         logger.info("Scraping Revolut Careers Portal.")
 
         async with requests.AsyncSession(impersonate="chrome124", headers=headers) as session:
-            try:
-                res = await session.get(url, timeout=20)
-                if res.status_code != 200:
-                    logger.error(f"Revolut Careers returned non-200 status code {res.status_code}")
-                    return listings
+            for url in urls:
+                try:
+                    res = await session.get(url, timeout=20)
+                    if res.status_code != 200:
+                        logger.warning(f"Revolut Careers URL {url} returned status code {res.status_code}")
+                        continue
 
-                soup = BeautifulSoup(res.text, "html.parser")
-                script_tag = soup.find("script", id="__NEXT_DATA__")
+                    soup = BeautifulSoup(res.text, "html.parser")
+                    script_tag = soup.find("script", id="__NEXT_DATA__")
 
-                if script_tag:
-                    raw_text = script_tag.string or script_tag.text or (script_tag.contents[0] if script_tag.contents else "")
-                    if raw_text:
-                        try:
-                            data = json.loads(raw_text)
-                            positions = data.get("props", {}).get("pageProps", {}).get("positions", [])
-                            for p in positions:
-                                jobid_raw = p.get("id")
-                                title_raw = p.get("text") or p.get("title")
-                                team_raw = p.get("team") or ""
+                    if script_tag:
+                        raw_text = script_tag.string or script_tag.text or (script_tag.contents[0] if script_tag.contents else "")
+                        if raw_text:
+                            try:
+                                data = json.loads(raw_text)
+                                positions = data.get("props", {}).get("pageProps", {}).get("positions", [])
+                                for p in positions:
+                                    jobid_raw = p.get("id")
+                                    title_raw = p.get("text") or p.get("title")
+                                    team_raw = p.get("team") or ""
 
-                                if not jobid_raw or not title_raw:
-                                    continue
+                                    if not jobid_raw or not title_raw:
+                                        continue
 
-                                if "engineering" not in str(team_raw).lower():
-                                    continue
+                                    if "engineering" not in str(team_raw).lower():
+                                        continue
 
-                                jobid_str = str(jobid_raw).strip()
-                                title_str = str(title_raw).strip()
+                                    jobid_str = str(jobid_raw).strip()
+                                    title_str = str(title_raw).strip()
 
-                                if jobid_str in seen_ids:
-                                    continue
+                                    if jobid_str in seen_ids:
+                                        continue
 
-                                seen_ids.add(jobid_str)
-                                job_link = f"https://www.revolut.com/en-IN/careers/position/{jobid_str}/"
-
-                                listings.append(
-                                    JobListing(
-                                        jobid=jobid_str,
-                                        role_name=title_str,
-                                        job_listing_link=job_link
-                                    )
-                                )
-                        except Exception as e:
-                            logger.warning(f"Error parsing Revolut __NEXT_DATA__ JSON: {e}")
-
-                # Fallback to direct HTML links parsing if __NEXT_DATA__ yielded nothing
-                if not listings:
-                    logger.info("Parsing direct HTML position links for Revolut...")
-                    for a in soup.find_all("a", href=True):
-                        href = a.get("href", "").strip()
-                        title = a.text.strip()
-                        if "/careers/position/" in href:
-                            match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', href)
-                            if match:
-                                jobid_str = match.group(1)
-                                if jobid_str not in seen_ids and title:
                                     seen_ids.add(jobid_str)
-                                    job_link = href if href.startswith("http") else f"https://www.revolut.com{href}"
+                                    job_link = f"https://www.revolut.com/en-IN/careers/position/{jobid_str}/"
+
                                     listings.append(
                                         JobListing(
                                             jobid=jobid_str,
-                                            role_name=title,
+                                            role_name=title_str,
                                             job_listing_link=job_link
                                         )
                                     )
-            except Exception as e:
-                logger.error(f"Revolut scrape request failed: {e}", exc_info=True)
+                            except Exception as e:
+                                logger.warning(f"Error parsing Revolut __NEXT_DATA__ JSON: {e}")
+
+                    # Fallback to direct HTML links parsing if __NEXT_DATA__ yielded nothing
+                    if not listings:
+                        logger.info("Parsing direct HTML position links for Revolut...")
+                        for a in soup.find_all("a", href=True):
+                            href = a.get("href", "").strip()
+                            title = a.text.strip()
+                            if "/careers/position/" in href:
+                                match = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', href)
+                                if match:
+                                    jobid_str = match.group(1)
+                                    if jobid_str not in seen_ids and title:
+                                        seen_ids.add(jobid_str)
+                                        job_link = href if href.startswith("http") else f"https://www.revolut.com{href}"
+                                        listings.append(
+                                            JobListing(
+                                                jobid=jobid_str,
+                                                role_name=title,
+                                                job_listing_link=job_link
+                                            )
+                                        )
+
+                    if listings:
+                        logger.info(f"Successfully scraped Revolut via {url}")
+                        break
+                except Exception as e:
+                    logger.error(f"Revolut scrape request to {url} failed: {e}")
 
         logger.info(f"Finished Revolut Careers scrape. Found total {len(listings)} listings.")
         return listings
+
 

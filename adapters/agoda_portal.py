@@ -23,9 +23,18 @@ class AgodaPortalAdapter(BaseJobAdapter):
         wp_api_url = "https://careersatagoda.com/wp-json/wp/v2/job"
 
         headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "max-age=0",
+            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "none",
+            "sec-fetch-user": "?1",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
         listings: List[JobListing] = []
@@ -63,6 +72,8 @@ class AgodaPortalAdapter(BaseJobAdapter):
                                         job_listing_link=job_link
                                     )
                                 )
+                else:
+                    logger.warning(f"Primary Agoda HTML page returned status code {res.status_code}")
             except Exception as e:
                 logger.warning(f"Primary Agoda HTML scrape encountered issue: {e}")
 
@@ -70,15 +81,19 @@ class AgodaPortalAdapter(BaseJobAdapter):
             if not listings:
                 logger.info("Primary Agoda HTML returned 0 listings or failed. Falling back to WordPress REST API...")
                 target_locs = ["gurugram", "gurgaon", "mumbai", "pune"]
-                for page in range(1, 4):
+                wp_headers = dict(headers)
+                wp_headers["accept"] = "application/json"
+
+                for page in range(1, 5):
                     try:
                         res_wp = await session.get(
                             wp_api_url,
                             params={"per_page": 100, "page": page},
-                            headers={"Accept": "application/json", "User-Agent": headers["User-Agent"]},
+                            headers=wp_headers,
                             timeout=15
                         )
                         if res_wp.status_code != 200:
+                            logger.warning(f"Agoda WP REST API page {page} returned status code {res_wp.status_code}")
                             break
                         items = res_wp.json()
                         if not items or not isinstance(items, list):
@@ -110,4 +125,5 @@ class AgodaPortalAdapter(BaseJobAdapter):
 
         logger.info(f"Finished Agoda Careers scrape. Found total {len(listings)} listings.")
         return listings
+
 

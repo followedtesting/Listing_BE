@@ -1,6 +1,8 @@
+import json
 import logging
+import re
 from typing import List
-from playwright.async_api import async_playwright
+from curl_cffi import requests
 from adapters.base import BaseJobAdapter, JobListing
 
 logger = logging.getLogger(__name__)
@@ -15,93 +17,78 @@ class OpenTextPortalAdapter(BaseJobAdapter):
         return "OpenText Careers"
 
     async def scrape(self) -> List[JobListing]:
-        base_url = "https://careers.opentext.com/us/en/search-results?category=Development&country=IND"
-        logger.info(f"Navigating to OpenText Careers: {base_url}")
+        logger.info("Scraping OpenText Careers Portal.")
         
+        headers = {
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "accept-language": "en-US,en;q=0.9",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+        }
+
         listings: List[JobListing] = []
         seen_ids = set()
         from_param = 0
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            try:
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-                context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800}
-                )
-                page = await context.new_page()
-                
-                while True:
-                    target_url = f"{base_url}&from={from_param}"
-                    logger.info(f"Scraping OpenText offset from={from_param}...")
-                    await page.goto(target_url, wait_until="domcontentloaded")
-                    await page.wait_for_timeout(3000)
-                    
-                    # Remove OneTrust cookie banner overlay if present
-                    await page.evaluate("""
-                        () => {
-                            const ot = document.getElementById('onetrust-consent-sdk');
-                            if (ot) ot.remove();
-                            const backdrop = document.querySelector('.onetrust-pc-dark-filter');
-                            if (backdrop) backdrop.remove();
-                        }
-                    """)
-                    
-                    job_cards = await page.evaluate("""
-                        () => {
-                            const links = Array.from(document.querySelectorAll('a[href*="/job/"]'));
-                            const results = [];
-                            for (const a of links) {
-                                const href = a.href;
-                                const title = a.innerText.trim();
-                                if (href && title && title.length > 2 && !title.toLowerCase().includes('saved jobs')) {
-                                    results.push({ title, href });
-                                }
-                            }
-                            return results;
-                        }
-                    """)
-                    
-                    logger.info(f"Offset from={from_param}: rendered {len(job_cards)} job cards.")
-                    
-                    new_on_page = 0
-                    for card in job_cards:
-                        href = card["href"]
-                        title = card["title"]
-                        
-                        parts = [p for p in href.split("/") if p]
-                        job_id = ""
-                        if "job" in parts:
-                            idx = parts.index("job")
-                            if idx + 1 < len(parts):
-                                job_id = parts[idx + 1]
-                        if not job_id:
-                            job_id = parts[-1] if parts else title
-                            
-                        if job_id and title and job_id not in seen_ids:
+        india_keywords = [
+            "bangalore", "bengaluru", "pune", "hyderabad", "chennai", "gurgaon",
+            "gurugram", "mumbai", "noida", "delhi", "karnataka", "maharashtra",
+            "telangana", "tamil nadu", "haryana"
+        ]
+
+        async with requests.AsyncSession(impersonate="chrome124", headers=headers) as session:
+            while True:
+                url = f"https://careers.opentext.com/us/en/search-results?from={from_param}"
+                try:
+                    res = await session.get(url, timeout=15)
+                    if res.status_code != 200:
+                        logger.warning(f"OpenText page from={from_param} returned HTTP {res.status_code}")
+                        break
+
+                    match = re.search(r'phApp\.ddo\s*=\s*(\{.*?\});\s*phApp', res.text, re.DOTALL)
+                    if not match:
+                        logger.warning(f"OpenText page from={from_param} missing phApp.ddo structure.")
+                        break
+
+                    ddo = json.loads(match.group(1))
+                    eager = ddo.get("eagerLoadRefineSearch", {})
+                    total_hits = eager.get("totalHits", 0)
+                    jobs = eager.get("data", {}).get("jobs", [])
+
+                    if not jobs:
+                        break
+
+                    for j in jobs:
+                        job_id = str(j.get("jobId") or j.get("reqId") or "").strip()
+                        title = (j.get("title") or "").strip()
+
+                        if not job_id or not title or job_id in seen_ids:
+                            continue
+
+                        country = str(j.get("country") or "").upper()
+                        location = str(j.get("location") or j.get("cityStateCountry") or "").lower()
+
+                        is_india = (country == "IND") or any(k in location for k in india_keywords) or ("india" in location)
+
+                        if is_india:
                             seen_ids.add(job_id)
-                            new_on_page += 1
+                            job_link = f"https://careers.opentext.com/us/en/job/{job_id}"
                             listings.append(
                                 JobListing(
                                     jobid=job_id,
                                     role_name=title,
-                                    job_listing_link=href
+                                    job_listing_link=job_link
                                 )
                             )
 
-                    if new_on_page == 0:
-                        break
-                        
-                    from_param += 10
-                    if from_param >= 200:  # safety cap
+                    if from_param + len(jobs) >= total_hits or from_param >= 400:
                         break
 
-            except Exception as e:
-                logger.error(f"Failed to scrape OpenText Careers Portal: {e}", exc_info=True)
-                raise
-            finally:
-                await browser.close()
-                
+                    from_param += 10
+                except Exception as e:
+                    logger.error(f"OpenText page from={from_param} scrape failed: {e}")
+                    break
+
         logger.info(f"Finished OpenText Careers scrape. Found total {len(listings)} listings.")
         return listings

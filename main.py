@@ -79,6 +79,19 @@ from adapters.shopee_portal import ShopeePortalAdapter
 from adapters.agoda_portal import AgodaPortalAdapter
 from adapters.revolut_portal import RevolutPortalAdapter
 from adapters.okx_portal import OKXPortalAdapter
+from adapters.okta_portal import OktaPortalAdapter
+from adapters.telekom_portal import TelekomPortalAdapter
+from adapters.paloalto_portal import PaloAltoPortalAdapter
+from adapters.freshworks_portal import FreshworksPortalAdapter
+from adapters.ukg_portal import UKGPortalAdapter
+from adapters.shurutech_portal import ShuruTechPortalAdapter
+from adapters.sprouts_portal import SproutsPortalAdapter
+from adapters.blackrock_portal import BlackRockPortalAdapter
+from adapters.mastercard_portal import MastercardPortalAdapter
+from adapters.teradata_portal import TeradataPortalAdapter
+from adapters.tenarai_portal import TenaraiPortalAdapter
+from adapters.thoughtworks_portal import ThoughtWorksPortalAdapter
+from adapters.uber_portal import UberPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 # Configure logging
@@ -168,6 +181,19 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     AgodaPortalAdapter(),
     RevolutPortalAdapter(),
     OKXPortalAdapter(),
+    OktaPortalAdapter(),
+    TelekomPortalAdapter(),
+    PaloAltoPortalAdapter(),
+    FreshworksPortalAdapter(),
+    UKGPortalAdapter(),
+    ShuruTechPortalAdapter(),
+    SproutsPortalAdapter(),
+    BlackRockPortalAdapter(),
+    MastercardPortalAdapter(),
+    TeradataPortalAdapter(),
+    TenaraiPortalAdapter(),
+    ThoughtWorksPortalAdapter(),
+    UberPortalAdapter(),
 ]
 
 app = FastAPI(
