@@ -92,7 +92,9 @@ from adapters.teradata_portal import TeradataPortalAdapter
 from adapters.tenarai_portal import TenaraiPortalAdapter
 from adapters.thoughtworks_portal import ThoughtWorksPortalAdapter
 from adapters.uber_portal import UberPortalAdapter
+from adapters.zoho_portal import ZohoPortalAdapter
 from mailer import generate_email_html, send_html_email
+
 
 # Configure logging
 logging.basicConfig(
@@ -194,6 +196,7 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     TenaraiPortalAdapter(),
     ThoughtWorksPortalAdapter(),
     UberPortalAdapter(),
+    ZohoPortalAdapter(),
 ]
 
 app = FastAPI(
