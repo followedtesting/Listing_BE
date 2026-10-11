@@ -93,6 +93,24 @@ from adapters.tenarai_portal import TenaraiPortalAdapter
 from adapters.thoughtworks_portal import ThoughtWorksPortalAdapter
 from adapters.uber_portal import UberPortalAdapter
 from adapters.zoho_portal import ZohoPortalAdapter
+from adapters.swiggy_portal import SwiggyPortalAdapter
+from adapters.target_portal import TargetPortalAdapter
+from adapters.metaforms_portal import MetaformsPortalAdapter
+from adapters.cred_portal import CredPortalAdapter
+from adapters.zepto_portal import ZeptoPortalAdapter
+from adapters.glean_portal import GleanPortalAdapter
+from adapters.browserstack_portal import BrowserStackPortalAdapter
+from adapters.postman_portal import PostmanPortalAdapter
+from adapters.thoughtspot_portal import ThoughtSpotPortalAdapter
+from adapters.devrev_portal import DevRevPortalAdapter
+from adapters.snowflake_portal import SnowflakePortalAdapter
+from adapters.lenovo_portal import LenovoPortalAdapter
+from adapters.scispace_portal import SciSpacePortalAdapter
+from adapters.palantir_portal import PalantirPortalAdapter
+from adapters.mistral_portal import MistralPortalAdapter
+from adapters.kraken_portal import KrakenPortalAdapter
+from adapters.newrelic_portal import NewRelicPortalAdapter
+from adapters.soprasteria_portal import SopraSteriaPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 
@@ -197,6 +215,24 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     ThoughtWorksPortalAdapter(),
     UberPortalAdapter(),
     ZohoPortalAdapter(),
+    SwiggyPortalAdapter(),
+    TargetPortalAdapter(),
+    MetaformsPortalAdapter(),
+    CredPortalAdapter(),
+    ZeptoPortalAdapter(),
+    GleanPortalAdapter(),
+    BrowserStackPortalAdapter(),
+    PostmanPortalAdapter(),
+    ThoughtSpotPortalAdapter(),
+    DevRevPortalAdapter(),
+    SnowflakePortalAdapter(),
+    LenovoPortalAdapter(),
+    SciSpacePortalAdapter(),
+    PalantirPortalAdapter(),
+    MistralPortalAdapter(),
+    KrakenPortalAdapter(),
+    NewRelicPortalAdapter(),
+    SopraSteriaPortalAdapter(),
 ]
 
 app = FastAPI(
