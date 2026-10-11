@@ -111,6 +111,9 @@ from adapters.mistral_portal import MistralPortalAdapter
 from adapters.kraken_portal import KrakenPortalAdapter
 from adapters.newrelic_portal import NewRelicPortalAdapter
 from adapters.soprasteria_portal import SopraSteriaPortalAdapter
+from adapters.vanguard_portal import VanguardPortalAdapter
+from adapters.nationwide_portal import NationwidePortalAdapter
+from adapters.doordash_portal import DoorDashPortalAdapter
 from mailer import generate_email_html, send_html_email
 
 
@@ -233,6 +236,9 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     KrakenPortalAdapter(),
     NewRelicPortalAdapter(),
     SopraSteriaPortalAdapter(),
+    VanguardPortalAdapter(),
+    NationwidePortalAdapter(),
+    DoorDashPortalAdapter(),
 ]
 
 app = FastAPI(
