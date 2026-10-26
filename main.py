@@ -135,6 +135,8 @@ async def lifespan(app: FastAPI):
     init_db()
     # Initialize queue records for all active portals
     QueueStorage.init_queue([{"portal_id": a.portal_id, "portal_name": a.portal_name} for a in ACTIVE_ADAPTERS])
+    # Launch startup recovery and auto-run in background task
+    asyncio.create_task(startup_recovery_and_auto_run())
     yield
 
 # List of active adapters that will be scraped.
@@ -590,12 +592,13 @@ queue_cancel_requested = False
 class QueueStartRequest(BaseModel):
     portal_ids: Optional[List[str]] = None
     send_email: bool = True
+    resume_if_pending: bool = True
 
 async def run_database_queue_worker(send_email: bool = True):
     """
-    Background worker that sequentially executes adapters from the NeonDB/JSON queue.
-    Each adapter runs inside a separate, monitored 350 MB subprocess.
-    Never crashes the main FastAPI server; automatically retries failed adapters.
+    Background worker that sequentially executes pending adapters from the NeonDB/JSON queue.
+    Direct in-process execution without subprocess overhead or limits.
+    Any crash/OOM reboot is automatically recovered on server restart.
     Dispatches a single HTML digest email over HTTPS Port 443 upon completion.
     """
     global is_queue_running, queue_cancel_requested
@@ -606,8 +609,7 @@ async def run_database_queue_worker(send_email: bool = True):
     async with queue_runner_lock:
         is_queue_running = True
         queue_cancel_requested = False
-        reset_sandbox_abort()
-        logger.info("=== Starting Sandboxed Database Queue Runner (350 MB RAM per Subprocess) ===")
+        logger.info("=== Starting Sequential Database Queue Runner on Backend ===")
         total_processed = 0
         total_new_listings = 0
         report_data = []
@@ -629,8 +631,15 @@ async def run_database_queue_worker(send_email: bool = True):
                 portal_name = item["portal_name"]
                 logger.info(f"--> [Queue] Starting next item: {portal_name} ({portal_id})...")
 
-                # Step 2: Mark Running
+                # Step 2: Mark Running in database BEFORE scraping begins
                 QueueStorage.update_status(portal_id, status="running")
+
+                # Locate the adapter instance
+                adapter = next((a for a in ACTIVE_ADAPTERS if a.portal_id == portal_id), None)
+                if not adapter:
+                    logger.error(f"Adapter for portal '{portal_id}' not found in ACTIVE_ADAPTERS.")
+                    QueueStorage.update_status(portal_id, status="failed", error_message="Adapter not found")
+                    continue
 
                 # Check if new listing AND old listing were both zero earlier
                 prev_listings = JobStorage.get_previous_listings(portal_id)
@@ -639,16 +648,25 @@ async def run_database_queue_worker(send_email: bool = True):
                 del prev_listings
                 del prev_new_listings
 
-                # Step 3: Execute in 350 MB Subprocess with retries
-                success, listings, error_msg, attempts = await run_adapter_with_retries(
-                    portal_id=portal_id,
-                    max_memory_mb=settings.SUBPROCESS_MEMORY_LIMIT_MB,
-                    timeout_secs=settings.SUBPROCESS_TIMEOUT_SECONDS,
-                    max_retries=settings.MAX_ADAPTER_RETRIES
-                )
+                # Step 3: Run adapter directly without subprocess or memory limits
+                try:
+                    current_listings = await asyncio.wait_for(adapter.scrape(), timeout=settings.SUBPROCESS_TIMEOUT_SECONDS)
+                    listings = [job.model_dump() for job in current_listings]
+                    del current_listings
+                    success = True
+                    error_msg = None
+                except asyncio.TimeoutError:
+                    success = False
+                    listings = []
+                    error_msg = f"TIMEOUT_EXCEEDED: Scrape exceeded {settings.SUBPROCESS_TIMEOUT_SECONDS}s"
+                except Exception as e:
+                    success = False
+                    listings = []
+                    error_msg = str(e)
+                    logger.error(f"Error scraping {portal_name}: {e}", exc_info=True)
 
-                # Check if cancelled during subprocess execution
-                if queue_cancel_requested or not is_queue_running or error_msg == "QUEUE_RESET_ABORT":
+                # Check if cancelled during execution
+                if queue_cancel_requested or not is_queue_running:
                     logger.info(f"Queue cancelled during '{portal_id}' execution. Setting status to idle and exiting.")
                     QueueStorage.update_status(portal_id, status="idle")
                     break
@@ -660,7 +678,7 @@ async def run_database_queue_worker(send_email: bool = True):
                     new_count = len(new_listings)
                     total_new_listings += new_count
 
-                    QueueStorage.update_status(portal_id, status="success", scraped_count=total_scraped, retry_count=attempts)
+                    QueueStorage.update_status(portal_id, status="success", scraped_count=total_scraped)
                     JobStorage.save_run_status(portal_id, status="success", scraped_count=total_scraped)
 
                     report_items = listings if was_both_zero_earlier else new_listings
@@ -674,9 +692,9 @@ async def run_database_queue_worker(send_email: bool = True):
                     })
                     logger.info(f"--> [Queue] {portal_name} SUCCEEDED. Scraped: {total_scraped}, New: {new_count}")
                 else:
-                    QueueStorage.update_status(portal_id, status="failed", error_message=error_msg, retry_count=attempts)
+                    QueueStorage.update_status(portal_id, status="failed", error_message=error_msg)
                     JobStorage.save_run_status(portal_id, status="failed", error_message=error_msg)
-                    logger.error(f"--> [Queue] {portal_name} FAILED after {attempts} attempt(s): {error_msg}")
+                    logger.error(f"--> [Queue] {portal_name} FAILED: {error_msg}")
 
                 total_processed += 1
                 gc.collect()
@@ -685,7 +703,7 @@ async def run_database_queue_worker(send_email: bool = True):
                     logger.info("Queue cancel detected between adapter runs. Exiting.")
                     break
 
-                await asyncio.sleep(1.0)  # Safe breathing room between subprocesses
+                await asyncio.sleep(1.0)  # Safe breathing room between adapters
 
             # Step 5: After all pending adapters finish, send email digest if requested
             if send_email and report_data and not queue_cancel_requested and is_queue_running:
@@ -701,14 +719,38 @@ async def run_database_queue_worker(send_email: bool = True):
             is_queue_running = False
             gc.collect()
 
+async def startup_recovery_and_auto_run():
+    """
+    Automatic boot-time recovery and execution:
+    1. Marks any adapter that was left in 'running' state when the server crashed as 'failed'.
+    2. Checks if any pending adapters remain in the queue table.
+    3. If pending adapters exist, automatically resumes running them sequentially.
+    """
+    try:
+        await asyncio.sleep(1.0)  # Brief pause for server initialization
+        recovered = QueueStorage.mark_interrupted_running_as_failed()
+        if recovered > 0:
+            logger.warning(f"Server boot: recovered {recovered} interrupted adapter(s) from previous crash/restart and marked as failed.")
+
+        pending_count = QueueStorage.count_pending()
+        if pending_count > 0:
+            cfg = QueueStorage.get_queue_config()
+            send_email = cfg.get("send_email", True)
+            logger.info(f"Server boot: found {pending_count} pending adapter(s). Auto-resuming sequential run (send_email={send_email})...")
+            await run_database_queue_worker(send_email=send_email)
+        else:
+            logger.info("Server boot: no pending adapters found in queue.")
+    except Exception as e:
+        logger.error(f"Error in startup_recovery_and_auto_run: {e}", exc_info=True)
+
 @app.post("/queue/start")
 async def start_queue_run(
     payload: QueueStartRequest = QueueStartRequest(),
     background_tasks: BackgroundTasks = None
 ):
     """
-    Resets selected or all adapters in the NeonDB queue table to 'pending'
-    and starts the background sequential worker running each in an isolated 350 MB subprocess.
+    Checks if any pending adapter is in the queue table and runs it,
+    or queues selected/all adapters and begins sequential execution.
     """
     global is_queue_running, queue_cancel_requested
     
@@ -727,10 +769,18 @@ async def start_queue_run(
         }
 
     queue_cancel_requested = False
-    reset_sandbox_abort()
-
-    reset_count = QueueStorage.reset_queue_to_pending(payload.portal_ids)
     
+    # Save the user's email preference for auto-resume across crashes
+    QueueStorage.save_queue_config(send_email=payload.send_email)
+
+    existing_pending = QueueStorage.count_pending()
+    if payload.resume_if_pending and existing_pending > 0 and payload.portal_ids is None:
+        run_count = existing_pending
+        msg = f"Resuming sequential run for {run_count} pending adapter(s)."
+    else:
+        run_count = QueueStorage.reset_queue_to_pending(payload.portal_ids)
+        msg = f"Queued {run_count} adapter(s) for sequential execution on backend."
+
     # Launch worker in background
     if background_tasks:
         background_tasks.add_task(run_database_queue_worker, payload.send_email)
@@ -739,8 +789,8 @@ async def start_queue_run(
 
     return {
         "status": "started",
-        "queued_adapters": reset_count,
-        "message": f"Queued {reset_count} adapter(s) for background 350MB sandboxed execution."
+        "queued_adapters": run_count,
+        "message": msg
     }
 
 @app.get("/queue/status")
@@ -752,11 +802,10 @@ def get_queue_status():
 
 @app.post("/queue/reset")
 async def reset_queue():
-    """Resets all queue items back to 'idle', instantly cancels active subprocess, and stops queue."""
+    """Resets all queue items back to 'idle' and stops active queue state."""
     global is_queue_running, queue_cancel_requested
     is_queue_running = False
     queue_cancel_requested = True
-    cancel_active_sandbox()  # Instantly terminate any running adapter subprocess tree
     count = QueueStorage.reset_all_to_idle()
     summary = QueueStorage.get_queue_summary()
     summary["is_running"] = False

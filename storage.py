@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from pathlib import Path
@@ -597,6 +598,93 @@ class QueueStorage:
                     count += 1
             cls._write_json_queue(q)
             return count
+
+    @classmethod
+    def mark_interrupted_running_as_failed(cls) -> int:
+        """
+        On server startup, checks if any adapters were left in 'running' state
+        due to an unexpected server crash or OOM restart, and marks them as failed.
+        """
+        err_msg = "Server restarted unexpectedly while running (OOM or crash)"
+        interrupted_ids = []
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if session:
+                try:
+                    records = session.query(AdapterQueueModel).filter(AdapterQueueModel.status == "running").all()
+                    for r in records:
+                        r.status = "failed"
+                        r.error_message = err_msg
+                        r.updated_at = datetime.utcnow()
+                        interrupted_ids.append(r.portal_id)
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.error(f"Error marking interrupted adapters in DB: {e}")
+                finally:
+                    session.close()
+        else:
+            q = cls._read_json_queue()
+            changed = False
+            for pid, item in q.items():
+                if item.get("status") == "running":
+                    item["status"] = "failed"
+                    item["error_message"] = err_msg
+                    item["updated_at"] = datetime.utcnow().isoformat()
+                    interrupted_ids.append(pid)
+                    changed = True
+            if changed:
+                cls._write_json_queue(q)
+
+        # Also update run status in JobStorage for consistency
+        for pid in interrupted_ids:
+            try:
+                JobStorage.save_run_status(pid, status="failed", error_message=err_msg)
+            except Exception as e:
+                logger.error(f"Error updating run status for {pid}: {e}")
+
+        if interrupted_ids:
+            logger.warning(
+                f"Crash recovery: marked {len(interrupted_ids)} interrupted adapter(s) from previous run as failed: {interrupted_ids}"
+            )
+        return len(interrupted_ids)
+
+    @classmethod
+    def count_pending(cls) -> int:
+        """Returns the number of adapters currently pending in the queue."""
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if session:
+                try:
+                    return session.query(AdapterQueueModel).filter(AdapterQueueModel.status == "pending").count()
+                except Exception as e:
+                    logger.error(f"Error counting pending adapters in DB: {e}")
+                finally:
+                    session.close()
+        q = cls._read_json_queue()
+        return sum(1 for item in q.values() if item.get("status") == "pending")
+
+    @classmethod
+    def save_queue_config(cls, send_email: bool = True) -> None:
+        """Saves current queue configuration (like send_email) to disk for restart persistence."""
+        file_path = os.path.join(settings.data_path, "queue_config.json")
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump({"send_email": send_email, "updated_at": datetime.utcnow().isoformat()}, f)
+        except Exception as e:
+            logger.error(f"Error saving queue_config.json: {e}")
+
+    @classmethod
+    def get_queue_config(cls) -> Dict[str, Any]:
+        """Reads persisted queue configuration."""
+        file_path = os.path.join(settings.data_path, "queue_config.json")
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error reading queue_config.json: {e}")
+        return {"send_email": True}
 
     @classmethod
     def reset_all_to_idle(cls) -> int:
