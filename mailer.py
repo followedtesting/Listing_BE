@@ -152,10 +152,109 @@ def send_html_email(subject: str, html_content: str, recipient: str = None) -> T
             server.login(smtp_user, smtp_password)
             server.send_message(msg)
             
-        success_msg = f"Email digest sent successfully to {email_to}"
+        success_msg = f"Email digest sent successfully to {email_to} via SMTP"
         logger.info(success_msg)
         return True, success_msg
     except Exception as e:
         error_msg = f"Failed to send email via SMTP: {e}"
         logger.error(error_msg, exc_info=True)
         return False, error_msg
+
+def send_resend_email(subject: str, html_content: str, recipient: str = None) -> Tuple[bool, str]:
+    """
+    Sends an HTML email using Resend API over standard HTTPS Port 443.
+    Never blocked by cloud hosting firewalls or Render network filters.
+    Returns (success: bool, message: str).
+    """
+    import httpx
+    api_key = settings.RESEND_API_KEY.strip() if settings.RESEND_API_KEY else ""
+    from_email = settings.RESEND_FROM_EMAIL.strip() if settings.RESEND_FROM_EMAIL else "onboarding@resend.dev"
+    to_email = recipient or settings.EMAIL_TO.strip() if settings.EMAIL_TO else ""
+
+    if not api_key:
+        msg = "RESEND_API_KEY not configured in environment (.env). Skipping Resend dispatch."
+        logger.warning(msg)
+        return False, msg
+
+    if not to_email:
+        msg = "Recipient email (EMAIL_TO) not configured. Cannot send Resend email."
+        logger.warning(msg)
+        return False, msg
+
+    payload = {
+        "from": from_email,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_content
+    }
+
+    try:
+        logger.info(f"Dispatching email via Resend API (HTTPS Port 443) to {to_email}...")
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=20.0
+        )
+
+        if response.status_code in (200, 201):
+            res_data = response.json()
+            email_id = res_data.get("id", "N/A")
+            success_msg = f"Email digest delivered successfully via Resend API (ID: {email_id}) to {to_email}"
+            logger.info(success_msg)
+            return True, success_msg
+        elif response.status_code == 403 and "send testing emails to your own email address" in response.text:
+            # Fallback for unverified Resend test domain: deliver to the registered account owner
+            owner_email = settings.SMTP_USER or "prakherpandey01002@gmail.com"
+            if owner_email and owner_email != to_email:
+                logger.warning(
+                    f"Resend testing mode restriction: '{to_email}' requires a verified custom domain at resend.com/domains. "
+                    f"Automatically redirecting test digest to Resend account owner: {owner_email}..."
+                )
+                payload["to"] = [owner_email]
+                retry_resp = httpx.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload,
+                    timeout=20.0
+                )
+                if retry_resp.status_code in (200, 201):
+                    res_data = retry_resp.json()
+                    email_id = res_data.get("id", "N/A")
+                    msg = f"Delivered via Resend to account owner {owner_email} (test mode, ID: {email_id})"
+                    logger.info(msg)
+                    return True, msg
+
+            err_msg = f"Resend API error (HTTP {response.status_code}): {response.text}"
+            logger.error(err_msg)
+            return False, err_msg
+        else:
+            err_msg = f"Resend API error (HTTP {response.status_code}): {response.text}"
+            logger.error(err_msg)
+            return False, err_msg
+    except Exception as e:
+        err_msg = f"Failed to send email via Resend HTTPS API: {e}"
+        logger.error(err_msg, exc_info=True)
+        return False, err_msg
+
+def send_digest_email_auto(subject: str, html_content: str, recipient: str = None) -> Tuple[bool, str]:
+    """
+    Smart email dispatcher:
+    1. Uses Resend API (HTTPS Port 443) if RESEND_API_KEY is configured.
+    2. Falls back to SMTP if configured.
+    """
+    if settings.RESEND_API_KEY and settings.RESEND_API_KEY.strip():
+        return send_resend_email(subject, html_content, recipient)
+    elif settings.SMTP_USER and settings.SMTP_PASSWORD:
+        return send_html_email(subject, html_content, recipient)
+    else:
+        msg = "Neither Resend (RESEND_API_KEY) nor SMTP credentials configured. Email skipped."
+        logger.warning(msg)
+        return False, msg
+

@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     # NeonDB PostgreSQL Configuration
     DATABASE_URL: str = ""
 
+    # Resend Email Configuration (HTTPS Port 443)
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
+
+    # Subprocess Sandbox Configuration
+    SUBPROCESS_MEMORY_LIMIT_MB: int = 350
+    SUBPROCESS_TIMEOUT_SECONDS: int = 90
+    MAX_ADAPTER_RETRIES: int = 2
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

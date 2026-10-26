@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from config import settings
-from database import get_db_session, get_database_url, JobListingModel, NewJobListingModel, AdapterRunModel
+from database import (
+    get_db_session, get_database_url, JobListingModel, NewJobListingModel, AdapterRunModel, AdapterQueueModel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -460,3 +462,328 @@ class JobStorage:
 
 # Alias JSONJobStorage to JobStorage for seamless compatibility across imports
 JSONJobStorage = JobStorage
+
+
+class QueueStorage:
+    """
+    Manages the persistent queue state of adapters for sequential sandbox execution.
+    Uses NeonDB (PostgreSQL) when DATABASE_URL is set, falls back to queue_status.json.
+    """
+    @classmethod
+    def _get_json_path(cls) -> Path:
+        return settings.data_path / "queue_status.json"
+
+    @classmethod
+    def _read_json_queue(cls) -> Dict[str, Dict[str, Any]]:
+        file_path = cls._get_json_path()
+        if not file_path.exists():
+            return {}
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading queue_status.json: {e}")
+            return {}
+
+    @classmethod
+    def _write_json_queue(cls, data: Dict[str, Dict[str, Any]]) -> None:
+        file_path = cls._get_json_path()
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Error writing queue_status.json: {e}")
+
+    @classmethod
+    def init_queue(cls, portals: List[Dict[str, str]]) -> None:
+        """Ensures all active adapters exist in the queue table/file with deterministic order_index."""
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if not session:
+                return
+            try:
+                existing_records = {r.portal_id: r for r in session.query(AdapterQueueModel).all()}
+                new_objects = []
+                for idx, p in enumerate(portals):
+                    pid = p["portal_id"]
+                    if pid not in existing_records:
+                        new_objects.append(
+                            AdapterQueueModel(
+                                portal_id=pid,
+                                portal_name=p["portal_name"],
+                                order_index=idx,
+                                status="idle",
+                                retry_count=0,
+                                max_retries=settings.MAX_ADAPTER_RETRIES,
+                                last_scraped_count=0
+                            )
+                        )
+                    else:
+                        existing_records[pid].order_index = idx
+
+                if new_objects:
+                    session.bulk_save_objects(new_objects)
+                session.commit()
+                logger.info(f"Initialized & synced {len(portals)} adapters with order_index in NeonDB.")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error initializing queue in DB: {e}")
+            finally:
+                session.close()
+        else:
+            q = cls._read_json_queue()
+            changed = False
+            for idx, p in enumerate(portals):
+                pid = p["portal_id"]
+                if pid not in q:
+                    q[pid] = {
+                        "portal_id": pid,
+                        "portal_name": p["portal_name"],
+                        "order_index": idx,
+                        "status": "idle",
+                        "retry_count": 0,
+                        "max_retries": settings.MAX_ADAPTER_RETRIES,
+                        "last_scraped_count": 0,
+                        "error_message": None,
+                        "updated_at": datetime.utcnow().isoformat()
+                    }
+                    changed = True
+                else:
+                    if q[pid].get("order_index") != idx:
+                        q[pid]["order_index"] = idx
+                        changed = True
+            if changed:
+                cls._write_json_queue(q)
+
+    @classmethod
+    def reset_queue_to_pending(cls, portal_ids: Optional[List[str]] = None) -> int:
+        """Marks queue records as pending to begin a sequential run."""
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if not session:
+                return 0
+            try:
+                query = session.query(AdapterQueueModel)
+                if portal_ids:
+                    query = query.filter(AdapterQueueModel.portal_id.in_(portal_ids))
+                
+                now = datetime.utcnow()
+                count = query.update(
+                    {
+                        AdapterQueueModel.status: "pending",
+                        AdapterQueueModel.retry_count: 0,
+                        AdapterQueueModel.error_message: None,
+                        AdapterQueueModel.updated_at: now
+                    },
+                    synchronize_session=False
+                )
+                session.commit()
+                return count
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error resetting queue in DB: {e}")
+                return 0
+            finally:
+                session.close()
+        else:
+            q = cls._read_json_queue()
+            count = 0
+            for pid, item in q.items():
+                if portal_ids is None or pid in portal_ids:
+                    item["status"] = "pending"
+                    item["retry_count"] = 0
+                    item["error_message"] = None
+                    item["updated_at"] = datetime.utcnow().isoformat()
+                    count += 1
+            cls._write_json_queue(q)
+            return count
+
+    @classmethod
+    def reset_all_to_idle(cls) -> int:
+        """Resets all queue records back to 'idle' with 0 retries and cleared errors."""
+        session = get_db_session() if JobStorage.is_db_enabled() else None
+        if session:
+            try:
+                now = datetime.utcnow()
+                count = session.query(AdapterQueueModel).update(
+                    {
+                        AdapterQueueModel.status: "idle",
+                        AdapterQueueModel.retry_count: 0,
+                        AdapterQueueModel.error_message: None,
+                        AdapterQueueModel.updated_at: now
+                    },
+                    synchronize_session=False
+                )
+                session.commit()
+                return count
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error resetting queue to idle in DB: {e}")
+            finally:
+                session.close()
+
+        q = cls._read_json_queue()
+        count = 0
+        for pid, item in q.items():
+            item["status"] = "idle"
+            item["retry_count"] = 0
+            item["error_message"] = None
+            item["updated_at"] = datetime.utcnow().isoformat()
+            count += 1
+        cls._write_json_queue(q)
+        return count
+
+    @classmethod
+    def get_next_pending(cls) -> Optional[Dict[str, Any]]:
+        """Atomically retrieves the next pending adapter to scrape, strictly ordered by order_index."""
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if not session:
+                return None
+            try:
+                record = (
+                    session.query(AdapterQueueModel)
+                    .filter(AdapterQueueModel.status == "pending")
+                    .order_by(AdapterQueueModel.order_index.asc(), AdapterQueueModel.portal_id.asc())
+                    .first()
+                )
+                if not record:
+                    return None
+                return {
+                    "portal_id": record.portal_id,
+                    "portal_name": record.portal_name,
+                    "order_index": record.order_index,
+                    "retry_count": record.retry_count,
+                    "max_retries": record.max_retries
+                }
+            except Exception as e:
+                logger.error(f"Error fetching next pending from DB: {e}")
+                return None
+            finally:
+                session.close()
+        else:
+            q = cls._read_json_queue()
+            pending_items = [
+                item for item in q.values()
+                if item.get("status") == "pending"
+            ]
+            if pending_items:
+                pending_items.sort(key=lambda x: (x.get("order_index", 999999), x.get("portal_id", "")))
+                return {
+                    "portal_id": pending_items[0]["portal_id"],
+                    "portal_name": pending_items[0]["portal_name"],
+                    "order_index": pending_items[0].get("order_index", 0),
+                    "retry_count": pending_items[0].get("retry_count", 0),
+                    "max_retries": pending_items[0].get("max_retries", 2)
+                }
+            return None
+
+    @classmethod
+    def update_status(
+        cls,
+        portal_id: str,
+        status: str,
+        scraped_count: int = 0,
+        error_message: Optional[str] = None,
+        retry_count: int = 0
+    ) -> None:
+        """Updates the status of a specific adapter in the queue."""
+        if JobStorage.is_db_enabled():
+            session = get_db_session()
+            if not session:
+                return
+            try:
+                record = session.query(AdapterQueueModel).filter(AdapterQueueModel.portal_id == portal_id).first()
+                if record:
+                    record.status = status
+                    record.updated_at = datetime.utcnow()
+                    record.retry_count = retry_count
+                    if status == "success":
+                        record.last_scraped_count = scraped_count
+                        record.error_message = None
+                    elif status == "failed":
+                        record.error_message = error_message
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error updating queue status in DB for {portal_id}: {e}")
+            finally:
+                session.close()
+        else:
+            q = cls._read_json_queue()
+            if portal_id in q:
+                q[portal_id]["status"] = status
+                q[portal_id]["updated_at"] = datetime.utcnow().isoformat()
+                q[portal_id]["retry_count"] = retry_count
+                if status == "success":
+                    q[portal_id]["last_scraped_count"] = scraped_count
+                    q[portal_id]["error_message"] = None
+                elif status == "failed":
+                    q[portal_id]["error_message"] = error_message
+                cls._write_json_queue(q)
+
+    @classmethod
+    def get_queue_summary(cls) -> Dict[str, Any]:
+        """Returns overall progress statistics and status for all queue items."""
+        session = get_db_session() if JobStorage.is_db_enabled() else None
+        if session:
+            try:
+                records = (
+                    session.query(AdapterQueueModel)
+                    .order_by(AdapterQueueModel.order_index.asc(), AdapterQueueModel.portal_id.asc())
+                    .all()
+                )
+                items = []
+                counts = {"total": len(records), "idle": 0, "pending": 0, "running": 0, "success": 0, "failed": 0}
+                current_running = None
+
+                for r in records:
+                    st = r.status.lower()
+                    counts[st] = counts.get(st, 0) + 1
+                    if st == "running" and not current_running:
+                        current_running = r.portal_name
+
+                    items.append({
+                        "portal_id": r.portal_id,
+                        "portal_name": r.portal_name,
+                        "order_index": r.order_index,
+                        "status": r.status,
+                        "retry_count": r.retry_count,
+                        "last_scraped_count": r.last_scraped_count,
+                        "error_message": r.error_message,
+                        "updated_at": r.updated_at.isoformat() if r.updated_at else None
+                    })
+
+                is_active = (counts.get("pending", 0) > 0 or counts.get("running", 0) > 0)
+                return {
+                    "is_active": is_active,
+                    "counts": counts,
+                    "current_running": current_running,
+                    "items": items
+                }
+            except Exception as e:
+                logger.error(f"Error reading queue summary from DB: {e}")
+            finally:
+                session.close()
+
+        q = cls._read_json_queue()
+        records = sorted(list(q.values()), key=lambda x: (x.get("order_index", 999999), x.get("portal_id", "")))
+        items = []
+        counts = {"total": len(records), "idle": 0, "pending": 0, "running": 0, "success": 0, "failed": 0}
+        current_running = None
+
+        for r in records:
+            st = r.get("status", "idle").lower()
+            counts[st] = counts.get(st, 0) + 1
+            if st == "running" and not current_running:
+                current_running = r.get("portal_name")
+            items.append(r)
+
+        is_active = (counts.get("pending", 0) > 0 or counts.get("running", 0) > 0)
+        return {
+            "is_active": is_active,
+            "counts": counts,
+            "current_running": current_running,
+            "items": items
+        }
+

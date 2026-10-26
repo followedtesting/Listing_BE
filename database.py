@@ -53,6 +53,23 @@ class AdapterRunModel(Base):
     last_scraped_count = Column(Integer, default=0)
 
 
+class AdapterQueueModel(Base):
+    """
+    Queue table in NeonDB storing the execution state of each adapter during sequential runs.
+    """
+    __tablename__ = "adapter_queue"
+
+    portal_id = Column(String(100), primary_key=True, index=True)
+    portal_name = Column(String(255), nullable=False)
+    order_index = Column(Integer, default=0, index=True, nullable=False)
+    status = Column(String(30), default="idle", index=True, nullable=False)  # 'idle', 'pending', 'running', 'success', 'failed'
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=2)
+    last_scraped_count = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 engine = None
 SessionLocal = None
 
@@ -79,6 +96,17 @@ def init_db():
         )
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         Base.metadata.create_all(bind=engine)
+        
+        # Ensure new column exists on pre-existing table in PostgreSQL
+        try:
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE adapter_queue ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_adapter_queue_order_index ON adapter_queue (order_index);"))
+                conn.commit()
+        except Exception as mig_err:
+            logger.warning(f"Note on order_index column migration: {mig_err}")
+
         logger.info("NeonDB database schema initialized successfully! Tables created/verified.")
     except Exception as e:
         logger.error(f"Failed to initialize NeonDB connection: {e}", exc_info=True)

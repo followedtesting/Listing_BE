@@ -4,11 +4,13 @@ import gc
 import logging
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
 
 from config import settings
 from database import init_db
-from storage import JobStorage, JSONJobStorage
+from storage import JobStorage, JSONJobStorage, QueueStorage
+from sandbox import run_adapter_with_retries, cancel_active_sandbox, reset_sandbox_abort
 from adapters.base import BaseJobAdapter
 from adapters.microsoft_portal import MicrosoftPortalAdapter
 from adapters.visa_portal import VisaPortalAdapter
@@ -114,7 +116,7 @@ from adapters.soprasteria_portal import SopraSteriaPortalAdapter
 from adapters.vanguard_portal import VanguardPortalAdapter
 from adapters.nationwide_portal import NationwidePortalAdapter
 from adapters.doordash_portal import DoorDashPortalAdapter
-from mailer import generate_email_html, send_html_email
+from mailer import generate_email_html, send_html_email, send_resend_email, send_digest_email_auto
 
 
 # Configure logging
@@ -131,6 +133,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Initialize database on startup if DATABASE_URL is set
     init_db()
+    # Initialize queue records for all active portals
+    QueueStorage.init_queue([{"portal_id": a.portal_id, "portal_name": a.portal_name} for a in ACTIVE_ADAPTERS])
     yield
 
 # List of active adapters that will be scraped.
@@ -573,6 +577,191 @@ async def send_digest_email():
         "email_sent": email_sent,
         "email_message": email_msg
     }
+
+
+# =========================================================================
+# NEW QUEUE RUNNER & SANDBOXED SUBPROCESS CONTROLLER
+# =========================================================================
+
+queue_runner_lock = asyncio.Lock()
+is_queue_running = False
+queue_cancel_requested = False
+
+class QueueStartRequest(BaseModel):
+    portal_ids: Optional[List[str]] = None
+    send_email: bool = True
+
+async def run_database_queue_worker(send_email: bool = True):
+    """
+    Background worker that sequentially executes adapters from the NeonDB/JSON queue.
+    Each adapter runs inside a separate, monitored 350 MB subprocess.
+    Never crashes the main FastAPI server; automatically retries failed adapters.
+    Dispatches a single HTML digest email over HTTPS Port 443 upon completion.
+    """
+    global is_queue_running, queue_cancel_requested
+    if queue_runner_lock.locked():
+        logger.warning("Queue runner is already active. Ignoring duplicate execution request.")
+        return
+
+    async with queue_runner_lock:
+        is_queue_running = True
+        queue_cancel_requested = False
+        reset_sandbox_abort()
+        logger.info("=== Starting Sandboxed Database Queue Runner (350 MB RAM per Subprocess) ===")
+        total_processed = 0
+        total_new_listings = 0
+        report_data = []
+
+        try:
+            while True:
+                # Immediate check: Has the user requested a cancellation or reset?
+                if queue_cancel_requested or not is_queue_running:
+                    logger.info("Queue execution cancelled/reset by user. Exiting worker loop.")
+                    break
+
+                # Step 1: Fetch next pending adapter atomically from NeonDB / storage (ordered by order_index)
+                item = QueueStorage.get_next_pending()
+                if not item:
+                    logger.info("No more pending adapters in queue. Sequential run complete.")
+                    break
+
+                portal_id = item["portal_id"]
+                portal_name = item["portal_name"]
+                logger.info(f"--> [Queue] Starting next item: {portal_name} ({portal_id})...")
+
+                # Step 2: Mark Running
+                QueueStorage.update_status(portal_id, status="running")
+
+                # Check if new listing AND old listing were both zero earlier
+                prev_listings = JobStorage.get_previous_listings(portal_id)
+                prev_new_listings = JobStorage.get_new_listings(portal_id)
+                was_both_zero_earlier = (len(prev_listings) == 0 and len(prev_new_listings) == 0)
+                del prev_listings
+                del prev_new_listings
+
+                # Step 3: Execute in 350 MB Subprocess with retries
+                success, listings, error_msg, attempts = await run_adapter_with_retries(
+                    portal_id=portal_id,
+                    max_memory_mb=settings.SUBPROCESS_MEMORY_LIMIT_MB,
+                    timeout_secs=settings.SUBPROCESS_TIMEOUT_SECONDS,
+                    max_retries=settings.MAX_ADAPTER_RETRIES
+                )
+
+                # Check if cancelled during subprocess execution
+                if queue_cancel_requested or not is_queue_running or error_msg == "QUEUE_RESET_ABORT":
+                    logger.info(f"Queue cancelled during '{portal_id}' execution. Setting status to idle and exiting.")
+                    QueueStorage.update_status(portal_id, status="idle")
+                    break
+
+                if success:
+                    # Diff and save state
+                    new_listings = JobStorage.diff_and_update(portal_id, listings)
+                    total_scraped = len(listings)
+                    new_count = len(new_listings)
+                    total_new_listings += new_count
+
+                    QueueStorage.update_status(portal_id, status="success", scraped_count=total_scraped, retry_count=attempts)
+                    JobStorage.save_run_status(portal_id, status="success", scraped_count=total_scraped)
+
+                    report_items = listings if was_both_zero_earlier else new_listings
+                    report_data.append({
+                        "portal_id": portal_id,
+                        "portal_name": portal_name,
+                        "was_both_zero_earlier": was_both_zero_earlier,
+                        "total_scraped": total_scraped,
+                        "new_listings_count": new_count,
+                        "report_items": report_items
+                    })
+                    logger.info(f"--> [Queue] {portal_name} SUCCEEDED. Scraped: {total_scraped}, New: {new_count}")
+                else:
+                    QueueStorage.update_status(portal_id, status="failed", error_message=error_msg, retry_count=attempts)
+                    JobStorage.save_run_status(portal_id, status="failed", error_message=error_msg)
+                    logger.error(f"--> [Queue] {portal_name} FAILED after {attempts} attempt(s): {error_msg}")
+
+                total_processed += 1
+                gc.collect()
+
+                if queue_cancel_requested or not is_queue_running:
+                    logger.info("Queue cancel detected between adapter runs. Exiting.")
+                    break
+
+                await asyncio.sleep(1.0)  # Safe breathing room between subprocesses
+
+            # Step 5: After all pending adapters finish, send email digest if requested
+            if send_email and report_data and not queue_cancel_requested and is_queue_running:
+                logger.info("Generating and dispatching HTML Email Digest via HTTPS Port 443 (Resend/Auto)...")
+                html_content = generate_email_html(report_data)
+                subject = f"Job Tracker Digest - {total_new_listings} New Listing(s) Found"
+                email_sent, email_msg = send_digest_email_auto(subject, html_content)
+                logger.info(f"Post-queue email result: {email_sent} - {email_msg}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error in run_database_queue_worker: {e}", exc_info=True)
+        finally:
+            is_queue_running = False
+            gc.collect()
+
+@app.post("/queue/start")
+async def start_queue_run(
+    payload: QueueStartRequest = QueueStartRequest(),
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Resets selected or all adapters in the NeonDB queue table to 'pending'
+    and starts the background sequential worker running each in an isolated 350 MB subprocess.
+    """
+    global is_queue_running, queue_cancel_requested
+    
+    # If a previous worker is currently winding down after a reset, wait briefly for lock release
+    if queue_runner_lock.locked() and not is_queue_running:
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if not queue_runner_lock.locked():
+                break
+
+    if is_queue_running or queue_runner_lock.locked():
+        return {
+            "status": "already_running",
+            "message": "A queue sequential run is already in progress.",
+            "summary": QueueStorage.get_queue_summary()
+        }
+
+    queue_cancel_requested = False
+    reset_sandbox_abort()
+
+    reset_count = QueueStorage.reset_queue_to_pending(payload.portal_ids)
+    
+    # Launch worker in background
+    if background_tasks:
+        background_tasks.add_task(run_database_queue_worker, payload.send_email)
+    else:
+        asyncio.create_task(run_database_queue_worker(payload.send_email))
+
+    return {
+        "status": "started",
+        "queued_adapters": reset_count,
+        "message": f"Queued {reset_count} adapter(s) for background 350MB sandboxed execution."
+    }
+
+@app.get("/queue/status")
+def get_queue_status():
+    """Returns the live progress and status of the background sequential queue."""
+    summary = QueueStorage.get_queue_summary()
+    summary["is_running"] = is_queue_running
+    return summary
+
+@app.post("/queue/reset")
+async def reset_queue():
+    """Resets all queue items back to 'idle', instantly cancels active subprocess, and stops queue."""
+    global is_queue_running, queue_cancel_requested
+    is_queue_running = False
+    queue_cancel_requested = True
+    cancel_active_sandbox()  # Instantly terminate any running adapter subprocess tree
+    count = QueueStorage.reset_all_to_idle()
+    summary = QueueStorage.get_queue_summary()
+    summary["is_running"] = False
+    return {"status": "reset", "reset_count": count, "summary": summary}
+
 
 
 
