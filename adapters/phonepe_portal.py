@@ -1,5 +1,7 @@
+import gc
 import logging
-from typing import List
+from typing import List, Set
+from curl_cffi.requests import AsyncSession
 from playwright.async_api import async_playwright
 from adapters.base import BaseJobAdapter, JobListing
 
@@ -14,27 +16,84 @@ class PhonePePortalAdapter(BaseJobAdapter):
     def portal_name(self) -> str:
         return "PhonePe Careers"
 
-    async def scrape(self) -> List[JobListing]:
-        target_url = "https://www.phonepe.com/careers/job-openings/"
-        logger.info(f"Navigating to PhonePe Careers: {target_url}")
+    def _parse_results(self, results: list, seen_ids: Set[str]) -> List[JobListing]:
+        listings = []
+        for job in results:
+            dept = str(job.get("department", "")).strip()
+            apply_url = job.get("applyUrl")
+            title = str(job.get("title", "")).strip()
 
+            if dept.lower() == "engineering" and apply_url and title:
+                apply_url_str = str(apply_url).strip()
+                parts = apply_url_str.rstrip("/").split("/")
+                job_id = parts[-1] if parts else apply_url_str
+
+                if job_id and job_id not in seen_ids:
+                    seen_ids.add(job_id)
+                    loc = job.get("location") or "India"
+                    listings.append(
+                        JobListing(
+                            jobid=job_id,
+                            role_name=title,
+                            job_listing_link=apply_url_str,
+                            location=loc,
+                        )
+                    )
+        return listings
+
+    async def _scrape_curl(self) -> List[JobListing]:
+        json_url = "https://www.phonepe.com/apollo/job-postings/latest.json"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://www.phonepe.com/careers/job-openings/",
+        }
+
+        seen_ids: Set[str] = set()
+        async with AsyncSession(impersonate="chrome124") as s:
+            resp = await s.get(json_url, headers=headers, timeout=20)
+            if resp.status_code != 200:
+                logger.warning(f"PhonePe JSON endpoint returned {resp.status_code}")
+                return []
+
+            api_data = resp.json()
+            results = api_data.get("results", []) if isinstance(api_data, dict) else []
+            listings = self._parse_results(results, seen_ids)
+
+        logger.info(f"PhonePe curl scraped {len(listings)} engineering jobs.")
+        return listings
+
+    async def _scrape_playwright(self) -> List[JobListing]:
+        logger.info("Falling back to Playwright (low-RAM) for PhonePe...")
+        target_url = "https://www.phonepe.com/careers/job-openings/"
         listings: List[JobListing] = []
-        seen_ids = set()
+        seen_ids: Set[str] = set()
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ]
+            )
             try:
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800}
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 )
                 page = await context.new_page()
+                await page.route(
+                    "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                    lambda route: route.abort()
+                )
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
 
-                await page.goto(target_url, wait_until="networkidle", timeout=30000)
-                await page.wait_for_timeout(2000)
-
-                # Fetch PhonePe job postings JSON endpoint inside browser context
                 json_url = "https://www.phonepe.com/apollo/job-postings/latest.json"
                 api_data = await page.evaluate(f"""
                     async () => {{
@@ -49,78 +108,21 @@ class PhonePePortalAdapter(BaseJobAdapter):
 
                 if isinstance(api_data, dict) and "results" in api_data:
                     results = api_data.get("results", [])
-                    logger.info(f"Retrieved {len(results)} total postings from PhonePe API.")
-
-                    for job in results:
-                        dept = str(job.get("department", "")).strip()
-                        apply_url = job.get("applyUrl")
-                        title = str(job.get("title", "")).strip()
-
-                        if dept.lower() == "engineering" and apply_url and title:
-                            apply_url_str = str(apply_url).strip()
-                            parts = apply_url_str.rstrip("/").split("/")
-                            job_id = parts[-1] if parts else apply_url_str
-
-                            if job_id and job_id not in seen_ids:
-                                seen_ids.add(job_id)
-                                listings.append(
-                                    JobListing(
-                                        jobid=job_id,
-                                        role_name=title,
-                                        job_listing_link=apply_url_str
-                                    )
-                                )
-
-                    logger.info(f"PhonePe API matched {len(listings)} Engineering jobs.")
-
-                # Fallback to DOM interaction and parsing if API returned zero jobs
-                if not listings:
-                    logger.info("Fallback to DOM interaction on PhonePe Careers page...")
-                    elements = await page.query_selector_all("text='Engineering'")
-                    for el in elements:
-                        if await el.is_visible():
-                            await el.click(force=True)
-                            await page.wait_for_timeout(2000)
-                            break
-
-                    smart_anchors = await page.query_selector_all("a[href*='smartrecruiters']")
-                    for a in smart_anchors:
-                        href = await a.get_attribute("href")
-                        if not href:
-                            continue
-
-                        parts = href.rstrip("/").split("/")
-                        job_id = parts[-1] if parts else ""
-
-                        if not job_id or job_id in seen_ids:
-                            continue
-
-                        text = await a.inner_text()
-                        lines = [line.strip() for line in text.split("\n") if line.strip()]
-                        # In PhonePe job card, title is typically line index 2 or last non-location line
-                        title = ""
-                        for line in lines:
-                            if line not in ["Pune", "Bengaluru", "Engineering", "Full-time"] and not line.endswith("ago"):
-                                title = line
-                                break
-                        if not title and lines:
-                            title = lines[0]
-
-                        if job_id and title:
-                            seen_ids.add(job_id)
-                            listings.append(
-                                JobListing(
-                                    jobid=job_id,
-                                    role_name=title,
-                                    job_listing_link=href
-                                )
-                            )
-
-            except Exception as e:
-                logger.error(f"Failed to scrape PhonePe Careers Portal: {e}", exc_info=True)
-                raise
+                    listings = self._parse_results(results, seen_ids)
             finally:
                 await browser.close()
 
-        logger.info(f"Finished PhonePe Careers scrape. Found total {len(listings)} listings.")
         return listings
+
+    async def scrape(self) -> List[JobListing]:
+        try:
+            listings = await self._scrape_curl()
+            if listings:
+                return listings
+        except Exception as e:
+            logger.warning(f"PhonePe curl scraping error: {e}. Falling back to Playwright...")
+
+        try:
+            return await self._scrape_playwright()
+        finally:
+            gc.collect()

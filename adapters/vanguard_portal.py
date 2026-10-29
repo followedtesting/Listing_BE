@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import logging
 from typing import List, Set, Optional, Dict, Any
 from bs4 import BeautifulSoup
@@ -69,9 +70,6 @@ class VanguardPortalAdapter(BaseJobAdapter):
         )
 
     async def _scrape_curl(self) -> List[JobListing]:
-        """
-        Scrapes Vanguard job listings directly via the M-Cloud search API.
-        """
         seen_ids: Set[str] = set()
         listings: List[JobListing] = []
 
@@ -125,81 +123,103 @@ class VanguardPortalAdapter(BaseJobAdapter):
         return listings
 
     async def _scrape_playwright(self) -> List[JobListing]:
-        """
-        Fallback scraping using Playwright by navigating to the search results page
-        and intercepting the M-Cloud search API response or parsing rendered DOM cards.
-        """
         logger.info("Attempting Vanguard careers scraping via Playwright fallback...")
         seen_ids: Set[str] = set()
         listings: List[JobListing] = []
         captured_api_jobs: List[Dict[str, Any]] = []
+        playwright_obj = None
+        browser = None
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
+        try:
+            playwright_obj = await async_playwright().start()
+            browser = await playwright_obj.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ],
             )
-            try:
-                context = await browser.new_context(
-                    viewport={"width": 1440, "height": 900},
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                )
-                page = await context.new_page()
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            await page.route(
+                "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                lambda route: route.abort()
+            )
 
-                # Intercept M-Cloud responses
-                async def handle_response(response):
-                    if "jobsapi-google.m-cloud.io/api/job/search" in response.url:
-                        try:
-                            json_data = await response.json()
-                            results = json_data.get("searchResults") or []
-                            captured_api_jobs.extend(results)
-                        except Exception:
-                            pass
+            # Intercept M-Cloud responses
+            async def handle_response(response):
+                if "jobsapi-google.m-cloud.io/api/job/search" in response.url:
+                    try:
+                        json_data = await response.json()
+                        results = json_data.get("searchResults") or []
+                        captured_api_jobs.extend(results)
+                    except Exception:
+                        pass
 
-                page.on("response", handle_response)
+            page.on("response", handle_response)
 
-                await page.goto(self.TARGET_PAGE_URL, wait_until="networkidle", timeout=45000)
-                await asyncio.sleep(4)
+            await page.goto(self.TARGET_PAGE_URL, wait_until="networkidle", timeout=45000)
+            await asyncio.sleep(3)
 
-                # 1. Process captured API responses if any
-                if captured_api_jobs:
-                    for item in captured_api_jobs:
-                        listing = self._parse_job_item(item, seen_ids)
-                        if listing:
-                            listings.append(listing)
+            # 1. Process captured API responses if any
+            if captured_api_jobs:
+                for item in captured_api_jobs:
+                    listing = self._parse_job_item(item, seen_ids)
+                    if listing:
+                        listings.append(listing)
 
-                # 2. If no jobs captured from API, extract from DOM
-                if not listings:
-                    html = await page.content()
-                    soup = BeautifulSoup(html, "html.parser")
-                    job_links = soup.select("a[href*='/job/']")
-                    for a in job_links:
-                        href = (a.get("href") or "").strip()
-                        title = a.get_text(strip=True)
-                        if not href or not title:
-                            continue
+            # 2. If no jobs captured from API, extract from DOM
+            if not listings:
+                html = await page.content()
+                soup = BeautifulSoup(html, "html.parser")
+                job_links = soup.select("a[href*='/job/']")
+                for a in job_links:
+                    href = (a.get("href") or "").strip()
+                    title = a.get_text(strip=True)
+                    if not href or not title:
+                        continue
 
-                        import re
-                        m = re.search(r"/job/(\d+)/", href)
-                        job_id = m.group(1) if m else href
-                        if job_id in seen_ids:
-                            continue
+                    import re
+                    m = re.search(r"/job/(\d+)/", href)
+                    job_id = m.group(1) if m else href
+                    if job_id in seen_ids:
+                        continue
 
-                        full_url = href if href.startswith("http") else f"https://www.vanguardjobs.com{href}"
-                        seen_ids.add(job_id)
-                        listings.append(
-                            JobListing(
-                                jobid=job_id,
-                                role_name=title,
-                                job_listing_link=full_url,
-                                location="Hyderabad, India",
-                            )
+                    full_url = href if href.startswith("http") else f"https://www.vanguardjobs.com{href}"
+                    seen_ids.add(job_id)
+                    listings.append(
+                        JobListing(
+                            jobid=job_id,
+                            role_name=title,
+                            job_listing_link=full_url,
+                            location="Hyderabad, India",
                         )
+                    )
+                del soup
 
-            except Exception as e:
-                logger.error(f"Playwright scraping error for Vanguard: {e}")
-            finally:
-                await browser.close()
+        except Exception as e:
+            logger.error(f"Playwright scraping error for Vanguard: {e}")
+        finally:
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if playwright_obj:
+                try:
+                    await playwright_obj.stop()
+                except Exception:
+                    pass
+            gc.collect()
 
         logger.info(f"Vanguard Playwright scraped {len(listings)} jobs.")
         return listings

@@ -1,6 +1,7 @@
+import gc
 import logging
-import json
-from typing import List
+from typing import List, Set
+from curl_cffi.requests import AsyncSession
 from playwright.async_api import async_playwright
 from adapters.base import BaseJobAdapter, JobListing
 
@@ -15,42 +16,122 @@ class AmazonPortalAdapter(BaseJobAdapter):
     def portal_name(self) -> str:
         return "Amazon Jobs Portal"
 
-    async def scrape(self) -> List[JobListing]:
-        base_url = "https://www.amazon.jobs/en-gb/search?offset=0&result_limit=10&sort=recent&category%5B%5D=software-development&country%5B%5D=IND"
-        logger.info(f"Navigating to Amazon Jobs page to establish session context: {base_url}")
-        
+    def _parse_jobs(self, jobs: list, seen_ids: Set[str]) -> tuple[List[JobListing], bool]:
+        listings = []
+        duplicate_found = False
+        for job in jobs:
+            job_id = str(job.get("id_icims") or "").strip()
+            title = str(job.get("title") or "").strip()
+            job_path = str(job.get("job_path") or "").strip()
+
+            if job_id and title:
+                if job_id in seen_ids:
+                    duplicate_found = True
+                    break
+
+                seen_ids.add(job_id)
+                full_link = f"https://www.amazon.jobs{job_path}" if job_path.startswith("/") else f"https://www.amazon.jobs/en-gb/jobs/{job_id}"
+                loc = job.get("city") or job.get("country_code") or "India"
+
+                listings.append(
+                    JobListing(
+                        jobid=job_id,
+                        role_name=title,
+                        job_listing_link=full_link,
+                        location=loc,
+                    )
+                )
+        return listings, duplicate_found
+
+    async def _scrape_curl(self) -> List[JobListing]:
         listings: List[JobListing] = []
-        seen_ids = set()
-        
+        seen_ids: Set[str] = set()
+        offset = 0
+        page_size = 100
+        max_offset = 3000
+
+        headers = {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://www.amazon.jobs/en-gb/search?category[]=software-development&country[]=IND",
+        }
+
+        async with AsyncSession(impersonate="chrome124") as s:
+            while offset < max_offset:
+                api_url = (
+                    f"https://www.amazon.jobs/en-gb/search.json"
+                    f"?category%5B%5D=software-development&normalized_country_code%5B%5D=IND"
+                    f"&offset={offset}&result_limit={page_size}&sort=recent"
+                )
+                resp = await s.get(api_url, headers=headers, timeout=20)
+                if resp.status_code != 200:
+                    logger.warning(f"Amazon API returned status {resp.status_code} at offset {offset}")
+                    break
+
+                res_data = resp.json()
+                hits = res_data.get("hits", 0)
+                jobs = res_data.get("jobs", [])
+                if not jobs:
+                    break
+
+                new_listings, duplicate_found = self._parse_jobs(jobs, seen_ids)
+                listings.extend(new_listings)
+
+                if duplicate_found or len(jobs) < page_size or (hits and len(seen_ids) >= hits):
+                    break
+
+                offset += page_size
+
+        logger.info(f"Amazon curl scraped {len(listings)} listings.")
+        return listings
+
+    async def _scrape_playwright(self) -> List[JobListing]:
+        logger.info("Falling back to Playwright (low-RAM) for Amazon...")
+        listings: List[JobListing] = []
+        seen_ids: Set[str] = set()
+
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ]
+            )
             try:
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800}
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 )
                 page = await context.new_page()
-                
-                await page.goto(base_url, wait_until="domcontentloaded")
-                await page.wait_for_timeout(2000)
-                
+                # Route abort heavy resources
+                await page.route(
+                    "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                    lambda route: route.abort()
+                )
+                await page.goto("https://www.amazon.jobs/en-gb/search", wait_until="domcontentloaded", timeout=30000)
+
                 offset = 0
                 page_size = 100
                 max_offset = 3000
-                
+
                 while offset < max_offset:
-                    logger.info(f"Fetching Amazon Software Development (India) jobs offset {offset}...")
-                    api_url = f"https://www.amazon.jobs/en-gb/search.json?category%5B%5D=software-development&normalized_country_code%5B%5D=IND&offset={offset}&result_limit={page_size}&sort=recent"
-                    
+                    api_url = (
+                        f"https://www.amazon.jobs/en-gb/search.json"
+                        f"?category%5B%5D=software-development&normalized_country_code%5B%5D=IND"
+                        f"&offset={offset}&result_limit={page_size}&sort=recent"
+                    )
                     res_data = await page.evaluate(f"""
                         async () => {{
                             try {{
                                 const response = await fetch('{api_url}', {{
-                                    headers: {{
-                                        'Accept': 'application/json',
-                                        'X-Requested-With': 'XMLHttpRequest'
-                                    }}
+                                    headers: {{ 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }}
                                 }});
                                 return await response.json();
                             }} catch (err) {{
@@ -58,57 +139,36 @@ class AmazonPortalAdapter(BaseJobAdapter):
                             }}
                         }}
                     """)
-                    
-                    if res_data.get("error") is not None:
-                        logger.error(f"Error fetching Amazon listings at offset {offset}: {res_data['error']}")
+
+                    if not res_data or res_data.get("error"):
                         break
-                        
+
                     hits = res_data.get("hits", 0)
                     jobs = res_data.get("jobs", [])
-                    
                     if not jobs:
-                        logger.info(f"No jobs returned from Amazon API at offset {offset}. Stopping pagination.")
                         break
-                        
-                    page_added = 0
-                    duplicate_found = False
-                    
-                    for job in jobs:
-                        job_id = str(job.get("id_icims") or "").strip()
-                        title = str(job.get("title") or "").strip()
-                        job_path = str(job.get("job_path") or "").strip()
-                        
-                        if job_id and title:
-                            if job_id in seen_ids:
-                                logger.info(f"Encountered duplicate job_id '{job_id}' at offset {offset}. Stopping pagination.")
-                                duplicate_found = True
-                                break
-                                
-                            seen_ids.add(job_id)
-                            full_link = f"https://www.amazon.jobs{job_path}" if job_path.startswith("/") else f"https://www.amazon.jobs/en-gb/jobs/{job_id}"
-                            
-                            listings.append(
-                                JobListing(
-                                    jobid=job_id,
-                                    role_name=title,
-                                    job_listing_link=full_link
-                                )
-                            )
-                            page_added += 1
-                            
-                    logger.info(f"Scraped {page_added} jobs from Amazon offset {offset}.")
-                    
+
+                    new_listings, duplicate_found = self._parse_jobs(jobs, seen_ids)
+                    listings.extend(new_listings)
+
                     if duplicate_found or len(jobs) < page_size or (hits and len(seen_ids) >= hits):
-                        logger.info(f"Reached end of listings for Amazon (total scraped: {len(seen_ids)}, total available: {hits}). Stopping pagination.")
                         break
-                        
+
                     offset += page_size
-                    
-            except Exception as e:
-                logger.error(f"Failed to scrape Amazon Jobs Portal: {e}", exc_info=True)
-                raise
             finally:
                 await browser.close()
-                
-        logger.info(f"Finished Amazon Jobs scrape. Found total {len(listings)} listings.")
+
         return listings
+
+    async def scrape(self) -> List[JobListing]:
+        try:
+            listings = await self._scrape_curl()
+            if listings:
+                return listings
+        except Exception as e:
+            logger.warning(f"Amazon curl scraping error: {e}. Falling back to Playwright...")
+
+        try:
+            return await self._scrape_playwright()
+        finally:
+            gc.collect()

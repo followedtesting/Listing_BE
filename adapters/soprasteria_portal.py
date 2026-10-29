@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import logging
 import math
 import re
@@ -29,14 +30,10 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
         return "Sopra Steria Careers Portal"
 
     def _extract_listings_from_soup(self, soup: BeautifulSoup, seen_ids: Set[str]) -> List[JobListing]:
-        """
-        Extracts JobListing objects from the parsed page HTML.
-        """
         listings: List[JobListing] = []
         tiles = soup.select(".attrax-vacancy-tile, .attrax-list-widget__item")
 
         for tile in tiles:
-            # 1. Job ID
             job_id = tile.get("data-jobid")
             if not job_id:
                 link_tag = tile.select_one("a[href*='jid-']")
@@ -52,7 +49,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
             if job_id in seen_ids:
                 continue
 
-            # 2. Title & Link
             title_tag = tile.select_one(".attrax-vacancy-tile__title, a[href*='jid-']")
             if not title_tag:
                 continue
@@ -67,7 +63,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
             else:
                 full_link = f"https://careers.soprasteria.in{href}"
 
-            # 3. Location
             loc_tag = tile.select_one(
                 ".attrax-vacancy-tile__location-freetext .attrax-vacancy-tile__item-value, "
                 ".attrax-vacancy-tile__location-freetext, "
@@ -76,7 +71,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
             location = "India"
             if loc_tag:
                 loc_text = loc_tag.get_text(strip=True)
-                # Clean up if the label text was captured
                 loc_text = re.sub(r"^Location\s*", "", loc_text, flags=re.I).strip()
                 if loc_text:
                     location = loc_text
@@ -94,9 +88,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
         return listings
 
     def _parse_total_results(self, soup: BeautifulSoup) -> Optional[int]:
-        """
-        Extract total results count from the Attrax pagination element if present.
-        """
         total_el = soup.select_one(".attrax-pagination__total-results, .search-results-count")
         if total_el:
             text = total_el.get_text(strip=True)
@@ -109,9 +100,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
         return None
 
     async def _scrape_curl(self) -> List[JobListing]:
-        """
-        Scrapes Sopra Steria job listings across all pages using curl_cffi.
-        """
         seen_ids: Set[str] = set()
         listings: List[JobListing] = []
 
@@ -123,7 +111,6 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
         }
 
         async with AsyncSession(impersonate="chrome124") as session:
-            # Fetch Page 1 first
             first_url = f"{self.BASE_URL}&page=1"
             resp = await session.get(first_url, headers=headers, timeout=25)
             if resp.status_code != 200:
@@ -139,80 +126,102 @@ class SopraSteriaPortalAdapter(BaseJobAdapter):
                 total_pages = max(1, math.ceil(total_results / 6))
             else:
                 total_pages = 10
+            del soup
 
             logger.info(f"Sopra Steria total results: {total_results}, total pages: {total_pages}")
 
-            if total_pages > 1:
-                sem = asyncio.Semaphore(5)
-
-                async def fetch_page(page_num: int) -> List[JobListing]:
-                    async with sem:
-                        url = f"{self.BASE_URL}&page={page_num}"
-                        try:
-                            r = await session.get(url, headers=headers, timeout=25)
-                            if r.status_code == 200:
-                                page_soup = BeautifulSoup(r.text, "html.parser")
-                                return self._extract_listings_from_soup(page_soup, seen_ids)
-                            else:
-                                logger.warning(f"Sopra Steria page {page_num} returned HTTP {r.status_code}")
-                        except Exception as e:
-                            logger.error(f"Error fetching Sopra Steria page {page_num}: {e}")
-                        return []
-
-                tasks = [fetch_page(p) for p in range(2, total_pages + 1)]
-                results = await asyncio.gather(*tasks)
-                for res in results:
-                    listings.extend(res)
+            # Stream sequentially page by page to conserve RAM
+            for page_num in range(2, total_pages + 1):
+                url = f"{self.BASE_URL}&page={page_num}"
+                try:
+                    r = await session.get(url, headers=headers, timeout=25)
+                    if r.status_code == 200:
+                        page_soup = BeautifulSoup(r.text, "html.parser")
+                        cur_listings = self._extract_listings_from_soup(page_soup, seen_ids)
+                        del page_soup
+                        if not cur_listings:
+                            break
+                        listings.extend(cur_listings)
+                    else:
+                        logger.warning(f"Sopra Steria page {page_num} returned HTTP {r.status_code}")
+                        break
+                except Exception as e:
+                    logger.error(f"Error fetching Sopra Steria page {page_num}: {e}")
+                    break
 
         logger.info(f"Sopra Steria curl scraped {len(listings)} jobs.")
         return listings
 
     async def _scrape_playwright(self) -> List[JobListing]:
-        """
-        Fallback scraping using Playwright if curl_cffi fails.
-        """
         logger.info("Attempting Sopra Steria careers scraping via Playwright fallback...")
         seen_ids: Set[str] = set()
         listings: List[JobListing] = []
+        playwright_obj = None
+        browser = None
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
+        try:
+            playwright_obj = await async_playwright().start()
+            browser = await playwright_obj.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ],
             )
-            try:
-                context = await browser.new_context(
-                    viewport={"width": 1440, "height": 900},
-                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                )
-                page = await context.new_page()
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 800},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            await page.route(
+                "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                lambda route: route.abort()
+            )
 
-                # Fetch page 1
-                await page.goto(f"{self.BASE_URL}&page=1", wait_until="domcontentloaded", timeout=40000)
-                await asyncio.sleep(2)
+            # Fetch page 1
+            await page.goto(f"{self.BASE_URL}&page=1", wait_until="domcontentloaded", timeout=40000)
+            await asyncio.sleep(1.5)
 
+            html = await page.content()
+            soup = BeautifulSoup(html, "html.parser")
+            page_listings = self._extract_listings_from_soup(soup, seen_ids)
+            listings.extend(page_listings)
+
+            total_results = self._parse_total_results(soup)
+            total_pages = max(1, math.ceil(total_results / 6)) if total_results else 10
+            del soup
+
+            for page_num in range(2, total_pages + 1):
+                await page.goto(f"{self.BASE_URL}&page={page_num}", wait_until="domcontentloaded", timeout=40000)
+                await asyncio.sleep(1)
                 html = await page.content()
                 soup = BeautifulSoup(html, "html.parser")
-                page_listings = self._extract_listings_from_soup(soup, seen_ids)
-                listings.extend(page_listings)
+                cur_listings = self._extract_listings_from_soup(soup, seen_ids)
+                del soup
+                if not cur_listings:
+                    break
+                listings.extend(cur_listings)
 
-                total_results = self._parse_total_results(soup)
-                total_pages = max(1, math.ceil(total_results / 6)) if total_results else 10
-
-                for page_num in range(2, total_pages + 1):
-                    await page.goto(f"{self.BASE_URL}&page={page_num}", wait_until="domcontentloaded", timeout=40000)
-                    await asyncio.sleep(1.5)
-                    html = await page.content()
-                    soup = BeautifulSoup(html, "html.parser")
-                    cur_listings = self._extract_listings_from_soup(soup, seen_ids)
-                    if not cur_listings:
-                        break
-                    listings.extend(cur_listings)
-
-            except Exception as e:
-                logger.error(f"Playwright scraping error for Sopra Steria: {e}")
-            finally:
-                await browser.close()
+        except Exception as e:
+            logger.error(f"Playwright scraping error for Sopra Steria: {e}")
+        finally:
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if playwright_obj:
+                try:
+                    await playwright_obj.stop()
+                except Exception:
+                    pass
+            gc.collect()
 
         logger.info(f"Sopra Steria Playwright scraped {len(listings)} jobs.")
         return listings

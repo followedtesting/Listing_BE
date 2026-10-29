@@ -1,6 +1,7 @@
+import gc
 import logging
-import json
-from typing import List
+from typing import List, Set
+from curl_cffi.requests import AsyncSession
 from playwright.async_api import async_playwright
 from adapters.base import BaseJobAdapter, JobListing
 
@@ -15,40 +16,116 @@ class AkamaiPortalAdapter(BaseJobAdapter):
     def portal_name(self) -> str:
         return "Akamai Careers Portal"
 
-    async def scrape(self) -> List[JobListing]:
-        base_url = "https://jobs.akamai.com/en/sites/CX_1/jobs?lastSelectedFacet=TITLES&location=India&locationId=300000000469285&locationLevel=country&mode=location&selectedTitlesFacet=ENG"
-        logger.info(f"Navigating to Akamai Careers page to set session context: {base_url}")
-        
+    def _parse_req_list(self, req_list: list, seen_ids: Set[str]) -> tuple[List[JobListing], bool]:
+        listings = []
+        duplicate_found = False
+        for req in req_list:
+            jobid = req.get("Id")
+            title = req.get("Title")
+
+            if jobid and title:
+                jobid_str = str(jobid).strip()
+                if jobid_str in seen_ids:
+                    duplicate_found = True
+                    break
+
+                seen_ids.add(jobid_str)
+                job_listing_link = f"https://jobs.akamai.com/en/sites/CX_1/job/{jobid_str}"
+                loc = req.get("PrimaryLocation") or "India"
+
+                listings.append(
+                    JobListing(
+                        jobid=jobid_str,
+                        role_name=title.strip(),
+                        job_listing_link=job_listing_link,
+                        location=loc,
+                    )
+                )
+        return listings, duplicate_found
+
+    async def _scrape_curl(self) -> List[JobListing]:
         listings: List[JobListing] = []
-        seen_ids = set()
-        
+        seen_ids: Set[str] = set()
+        offset = 0
+        limit = 25
+        max_safety_limit = 200
+
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://jobs.akamai.com/en/sites/CX_1/jobs",
+        }
+
+        async with AsyncSession(impersonate="chrome124") as s:
+            while offset < max_safety_limit:
+                rest_api_url = "https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+                finder = f"findReqs;siteNumber=CX_1,facetsList=LOCATIONS%3BWORK_LOCATIONS%3BWORKPLACE_TYPES%3BTITLES%3BCATEGORIES%3BORGANIZATIONS%3BPOSTING_DATES%3BFLEX_FIELDS,limit={limit},offset={offset},lastSelectedFacet=TITLES,locationId=300000000469285,selectedTitlesFacet=ENG,sortBy=POSTING_DATES_DESC"
+                api_url = f"{rest_api_url}?onlyData=true&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}"
+
+                resp = await s.get(api_url, headers=headers, timeout=20)
+                if resp.status_code != 200:
+                    logger.warning(f"Akamai Oracle HCM API returned {resp.status_code} at offset {offset}")
+                    break
+
+                result = resp.json()
+                items = result.get("items", [])
+                if not items:
+                    break
+
+                req_list = items[0].get("requisitionList", [])
+                if not req_list:
+                    break
+
+                new_listings, duplicate_found = self._parse_req_list(req_list, seen_ids)
+                listings.extend(new_listings)
+
+                if duplicate_found or len(req_list) < limit:
+                    break
+
+                offset += limit
+
+        logger.info(f"Akamai curl scraped {len(listings)} listings.")
+        return listings
+
+    async def _scrape_playwright(self) -> List[JobListing]:
+        logger.info("Falling back to Playwright (low-RAM) for Akamai...")
+        target_url = "https://jobs.akamai.com/en/sites/CX_1/jobs"
+        listings: List[JobListing] = []
+        seen_ids: Set[str] = set()
+        offset = 0
+        limit = 25
+        max_safety_limit = 200
+
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ]
+            )
             try:
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800}
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 )
                 page = await context.new_page()
-                
-                # Load context
-                await page.goto(base_url, wait_until="domcontentloaded")
-                await page.wait_for_timeout(5000)
-                
-                offset = 0
-                limit = 25
-                max_safety_limit = 200  # Avoid runaway loop
-                
+                await page.route(
+                    "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                    lambda route: route.abort()
+                )
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+
                 while offset < max_safety_limit:
-                    logger.info(f"Fetching Akamai careers listings starting at offset {offset}...")
-                    
-                    # Prepare API URL
                     rest_api_url = "https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
                     finder = f"findReqs;siteNumber=CX_1,facetsList=LOCATIONS%3BWORK_LOCATIONS%3BWORKPLACE_TYPES%3BTITLES%3BCATEGORIES%3BORGANIZATIONS%3BPOSTING_DATES%3BFLEX_FIELDS,limit={limit},offset={offset},lastSelectedFacet=TITLES,locationId=300000000469285,selectedTitlesFacet=ENG,sortBy=POSTING_DATES_DESC"
                     api_url = f"{rest_api_url}?onlyData=true&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}"
-                    
-                    # Fetch JSON inside browser page context to pass CORS/WAF cleanly
+
                     result = await page.evaluate(f"""
                         async () => {{
                             try {{
@@ -59,58 +136,39 @@ class AkamaiPortalAdapter(BaseJobAdapter):
                             }}
                         }}
                     """)
-                    
-                    if "error" in result:
-                        logger.error(f"Error fetching Akamai listings at offset {offset} inside browser: {result['error']}")
+
+                    if not result or "error" in result:
                         break
-                        
+
                     items = result.get("items", [])
                     if not items:
-                        logger.info(f"No items returned from Akamai search API at offset {offset}. Stopping pagination.")
                         break
-                        
+
                     req_list = items[0].get("requisitionList", [])
                     if not req_list:
-                        logger.info(f"No requisitions returned in list at offset {offset}. Stopping pagination.")
                         break
-                        
-                    page_listings_count = 0
-                    duplicate_found = False
-                    
-                    for req in req_list:
-                        jobid = req.get("Id")
-                        title = req.get("Title")
-                        
-                        if jobid and title:
-                            jobid_str = str(jobid).strip()
-                            if jobid_str in seen_ids:
-                                logger.info(f"Encountered duplicate jobid '{jobid_str}' at offset {offset}. Stopping pagination.")
-                                duplicate_found = True
-                                break
-                                
-                            seen_ids.add(jobid_str)
-                            page_listings_count += 1
-                            
-                            job_listing_link = f"https://jobs.akamai.com/en/sites/CX_1/job/{jobid_str}"
-                            listings.append(
-                                JobListing(
-                                    jobid=jobid_str,
-                                    role_name=title.strip(),
-                                    job_listing_link=job_listing_link
-                                )
-                            )
-                            
-                    if duplicate_found:
+
+                    new_listings, duplicate_found = self._parse_req_list(req_list, seen_ids)
+                    listings.extend(new_listings)
+
+                    if duplicate_found or len(req_list) < limit:
                         break
-                        
-                    logger.info(f"Scraped {page_listings_count} jobs from offset {offset}.")
+
                     offset += limit
-                    
-            except Exception as e:
-                logger.error(f"Failed to scrape Akamai Careers Portal: {e}", exc_info=True)
-                raise
             finally:
                 await browser.close()
-                
-        logger.info(f"Finished Akamai Careers scrape. Found total {len(listings)} listings.")
+
         return listings
+
+    async def scrape(self) -> List[JobListing]:
+        try:
+            listings = await self._scrape_curl()
+            if listings:
+                return listings
+        except Exception as e:
+            logger.warning(f"Akamai curl scraping error: {e}. Falling back to Playwright...")
+
+        try:
+            return await self._scrape_playwright()
+        finally:
+            gc.collect()

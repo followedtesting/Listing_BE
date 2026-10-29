@@ -1,6 +1,8 @@
+import gc
 import logging
 import urllib.parse
-from typing import List
+from typing import List, Set
+from curl_cffi.requests import AsyncSession
 from playwright.async_api import async_playwright
 from adapters.base import BaseJobAdapter, JobListing
 
@@ -15,54 +17,117 @@ class MicrosoftPortalAdapter(BaseJobAdapter):
     def portal_name(self) -> str:
         return "Microsoft Careers Portal"
 
-    async def scrape(self) -> List[JobListing]:
-        query_params = {
-            "hl": "en",
-            "query": "Software Engineer",
-            "start": "0",
-            "location": "India",
-            "sort_by": "timestamp",
-            "filter_include_remote": "1"
-        }
-        # Construct the initial navigation URL to set cookies and context
-        nav_query = urllib.parse.urlencode(query_params)
-        base_url = f"https://apply.careers.microsoft.com/careers?{nav_query}"
-        
-        logger.info(f"Navigating to Microsoft Careers page to set session cookies: {base_url}")
-        
+    def _parse_positions(self, positions: list, seen_ids: Set[str]) -> List[JobListing]:
+        listings = []
+        for pos in positions:
+            jobid = str(pos.get("displayJobId") or pos.get("id") or "").strip()
+            role_name = (pos.get("name") or "").strip()
+            pos_url = (pos.get("positionUrl") or "").strip()
+
+            if not jobid or not role_name:
+                continue
+
+            if jobid in seen_ids:
+                continue
+            seen_ids.add(jobid)
+
+            if pos_url.startswith("http"):
+                job_listing_link = pos_url
+            else:
+                job_listing_link = f"https://apply.careers.microsoft.com{pos_url}"
+
+            loc = pos.get("location") or "India"
+
+            listings.append(
+                JobListing(
+                    jobid=jobid,
+                    role_name=role_name,
+                    job_listing_link=job_listing_link,
+                    location=loc,
+                )
+            )
+        return listings
+
+    async def _scrape_curl(self) -> List[JobListing]:
         listings: List[JobListing] = []
-        
+        seen_ids: Set[str] = set()
+        start = 0
+        page_size = 10
+        max_safety_limit = 200
+
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://apply.careers.microsoft.com/careers",
+        }
+
+        async with AsyncSession(impersonate="chrome124") as s:
+            while start < max_safety_limit:
+                search_params = {
+                    "domain": "microsoft.com",
+                    "query": "Software Engineer",
+                    "location": "India",
+                    "start": str(start),
+                    "sort_by": "timestamp",
+                    "filter_include_remote": "1",
+                    "hl": "en"
+                }
+                api_query = urllib.parse.urlencode(search_params)
+                url = f"https://apply.careers.microsoft.com/api/pcsx/search?{api_query}"
+
+                resp = await s.get(url, headers=headers, timeout=20)
+                if resp.status_code != 200:
+                    logger.warning(f"Microsoft API returned status {resp.status_code} at start={start}")
+                    break
+
+                result = resp.json()
+                positions = result.get("data", {}).get("positions", [])
+                if not positions:
+                    break
+
+                new_listings = self._parse_positions(positions, seen_ids)
+                listings.extend(new_listings)
+
+                start += page_size
+
+        logger.info(f"Microsoft curl scraped {len(listings)} listings.")
+        return listings
+
+    async def _scrape_playwright(self) -> List[JobListing]:
+        logger.info("Falling back to Playwright (low-RAM) for Microsoft...")
+        listings: List[JobListing] = []
+        seen_ids: Set[str] = set()
+
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--no-zygote",
+                    "--single-process",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
+                ]
+            )
             try:
-                # Use standard Chrome User-Agent and desktop viewport to bypass security / bot blocks on Render
-                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 context = await browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": 1280, "height": 800},
-                    extra_http_headers={
-                        "Accept-Language": "en-US,en;q=0.9",
-                    }
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                 )
                 page = await context.new_page()
-                
-                try:
-                    # Navigate with wait_until="domcontentloaded" and a 45s timeout to bypass slow tracker scripts/stylesheets
-                    await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
-                except Exception as nav_err:
-                    logger.warning(f"Non-fatal navigation warning/timeout (attempting to continue scrape): {nav_err}")
-                
-                # Allow a short delay for dynamic cookies/sessions to settle
-                await page.wait_for_timeout(3000)
-                
+                await page.route(
+                    "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
+                    lambda route: route.abort()
+                )
+                await page.goto("https://apply.careers.microsoft.com/careers", wait_until="domcontentloaded", timeout=30000)
+
                 start = 0
                 page_size = 10
-                max_safety_limit = 200  # Prevent infinite loops in case API format breaks
-                
+                max_safety_limit = 200
+
                 while start < max_safety_limit:
-                    logger.info(f"Fetching Microsoft careers listings starting at offset {start}...")
-                    
-                    # Construct search API query parameters
                     search_params = {
                         "domain": "microsoft.com",
                         "query": "Software Engineer",
@@ -74,73 +139,43 @@ class MicrosoftPortalAdapter(BaseJobAdapter):
                     }
                     api_query = urllib.parse.urlencode(search_params)
                     api_url = f"/api/pcsx/search?{api_query}"
-                    
-                    # Fetch inside page context to inherit active browser headers, cookies, and CORS context
+
                     result = await page.evaluate(f"""
                         async () => {{
                             try {{
                                 const response = await fetch({repr(api_url)});
-                                if (!response.ok) {{
-                                    return {{ error: `HTTP status ${{response.status}}` }};
-                                }}
                                 return await response.json();
                             }} catch (err) {{
                                 return {{ error: err.message }};
                             }}
                         }}
                     """)
-                    
-                    if not result:
-                        logger.warning(f"Microsoft Careers API call at start={start} returned empty result.")
+
+                    if not result or result.get("error"):
                         break
-                        
-                    # Check status and error message
-                    api_status = result.get("status", 200)
-                    api_error = result.get("error") or {}
-                    error_msg = api_error.get("message") if isinstance(api_error, dict) else str(api_error)
-                    
-                    if api_status != 200 or error_msg:
-                        logger.error(f"Error fetching from Microsoft API at start={start}: Status {api_status}, Msg: {error_msg}")
+
+                    positions = result.get("data", {}).get("positions", [])
+                    if not positions:
                         break
-                        
-                    data = result.get("data", {})
-                    positions = data.get("positions", [])
-                    
-                    if not positions or len(positions) == 0:
-                        logger.info(f"No positions found in Microsoft response data at offset {start}. Stopping pagination.")
-                        break
-                        
-                    logger.info(f"Retrieved {len(positions)} job positions from Microsoft Careers at offset {start}.")
-                    
-                    for pos in positions:
-                        # Fetch DisplayJobId (user specified) or fallback to ID
-                        jobid = str(pos.get("displayJobId") or pos.get("id"))
-                        role_name = pos.get("name")
-                        pos_url = pos.get("positionUrl", "")
-                        
-                        # Build absolute URL if relative
-                        if pos_url.startswith("http"):
-                            job_listing_link = pos_url
-                        else:
-                            job_listing_link = f"https://apply.careers.microsoft.com{pos_url}"
-                            
-                        if jobid and role_name and job_listing_link:
-                            listings.append(
-                                JobListing(
-                                    jobid=jobid.strip(),
-                                    role_name=role_name.strip(),
-                                    job_listing_link=job_listing_link.strip()
-                                )
-                            )
-                    
-                    # Increment start offset by page size
+
+                    new_listings = self._parse_positions(positions, seen_ids)
+                    listings.extend(new_listings)
+
                     start += page_size
-                    
-            except Exception as e:
-                logger.error(f"Failed to scrape Microsoft Careers Portal: {e}", exc_info=True)
-                raise
             finally:
                 await browser.close()
-                
-        logger.info(f"Finished Microsoft Careers scrape. Found total {len(listings)} listings.")
+
         return listings
+
+    async def scrape(self) -> List[JobListing]:
+        try:
+            listings = await self._scrape_curl()
+            if listings:
+                return listings
+        except Exception as e:
+            logger.warning(f"Microsoft curl scraping error: {e}. Falling back to Playwright...")
+
+        try:
+            return await self._scrape_playwright()
+        finally:
+            gc.collect()
