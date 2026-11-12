@@ -107,6 +107,19 @@ from adapters.soprasteria_portal import SopraSteriaPortalAdapter
 from adapters.vanguard_portal import VanguardPortalAdapter
 from adapters.nationwide_portal import NationwidePortalAdapter
 from adapters.doordash_portal import DoorDashPortalAdapter
+from adapters.infor_portal import InforPortalAdapter
+from adapters.shiprocket_portal import ShiprocketPortalAdapter
+from adapters.tekion_portal import TekionPortalAdapter
+from adapters.cohesity_portal import CohesityPortalAdapter
+from adapters.jll_portal import JLLPortalAdapter
+from adapters.lilly_portal import LillyPortalAdapter
+from adapters.hpe_portal import HPEPortalAdapter
+from adapters.three_m_portal import ThreeMPortalAdapter
+from adapters.procol_portal import ProcolPortalAdapter
+from adapters.improving_portal import ImprovingPortalAdapter
+from adapters.hubspot_portal import HubSpotPortalAdapter
+from adapters.allstate_portal import AllstatePortalAdapter
+from adapters.palo_alto_networks_portal import PaloAltoNetworksPortalAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +228,19 @@ ALL_ADAPTER_CLASSES: List[Type[BaseJobAdapter]] = [
     VanguardPortalAdapter,
     NationwidePortalAdapter,
     DoorDashPortalAdapter,
+    InforPortalAdapter,
+    ShiprocketPortalAdapter,
+    TekionPortalAdapter,
+    CohesityPortalAdapter,
+    JLLPortalAdapter,
+    LillyPortalAdapter,
+    HPEPortalAdapter,
+    ThreeMPortalAdapter,
+    ProcolPortalAdapter,
+    ImprovingPortalAdapter,
+    HubSpotPortalAdapter,
+    AllstatePortalAdapter,
+    PaloAltoNetworksPortalAdapter,
 ]
 
 # Build dictionary mapping portal_id to adapter class

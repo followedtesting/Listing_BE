@@ -1,7 +1,10 @@
 import logging
 import asyncio
+import json
+import ssl
+import urllib.request
 import re
-from typing import List
+from typing import List, Set
 from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 from adapters.base import BaseJobAdapter, JobListing
@@ -17,12 +20,7 @@ class DoorDashPortalAdapter(BaseJobAdapter):
     def portal_name(self) -> str:
         return "DoorDash Careers Portal"
 
-    async def scrape(self) -> List[JobListing]:
-        """
-        Scrapes DoorDash Careers filtered by:
-        Location: India
-        Function: Software Engineering | Machine Learning Engineering
-        """
+    async def _scrape_website(self) -> List[JobListing]:
         base_url = "https://careersatdoordash.com/job-search/?keyword=&location=India&function=Software%20Engineering%7CMachine%20Learning%20Engineering%7C"
         listings: List[JobListing] = []
         seen_ids = set()
@@ -35,7 +33,6 @@ class DoorDashPortalAdapter(BaseJobAdapter):
         }
 
         try:
-            # We use curl_cffi to bypass Cloudflare protection on careersatdoordash.com
             async with AsyncSession(impersonate="chrome124", headers=headers) as s:
                 while True:
                     url = f"{base_url}&spage={spage}"
@@ -83,14 +80,83 @@ class DoorDashPortalAdapter(BaseJobAdapter):
                             )
                             new_on_page += 1
 
-                    logger.info(f"Page {spage}: retrieved {new_on_page} new job listings.")
                     if new_on_page == 0:
                         break
-
                     spage += 1
-
-            logger.info(f"Finished DoorDash Careers scrape. Found total {len(listings)} listings.")
         except Exception as e:
-            logger.error(f"Error scraping DoorDash portal: {e}", exc_info=True)
+            logger.warning(f"Website scrape error for DoorDash: {e}")
 
+        return listings
+
+    async def _scrape_greenhouse_fallback(self) -> List[JobListing]:
+        """
+        Fallback using DoorDash India's Greenhouse API board ('doordashindia').
+        Bypasses Cloudflare blocking on Render/cloud hosting environments.
+        """
+        api_url = "https://boards-api.greenhouse.io/v1/boards/doordashindia/jobs?content=true"
+        logger.info(f"Fetching DoorDash India jobs via Greenhouse board API: {api_url}")
+        listings: List[JobListing] = []
+        seen_ids = set()
+
+        target_keywords = [
+            "software",
+            "data engine",
+            "machine learning",
+            "backend",
+            "frontend",
+            "fullstack",
+            "platform",
+            "infrastructure",
+            "ai engine",
+            "systems engine",
+            "analytics engine",
+        ]
+
+        def fetch_gh():
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
+                if resp.status == 200:
+                    return json.loads(resp.read().decode("utf-8")).get("jobs", [])
+            return []
+
+        try:
+            jobs = await asyncio.to_thread(fetch_gh)
+            for j in jobs:
+                job_id = str(j.get("id", "")).strip()
+                title = str(j.get("title", "")).strip()
+                if not job_id or not title or job_id in seen_ids:
+                    continue
+
+                depts = [d.get("name", "").lower() for d in j.get("departments", [])]
+                is_eng = any(k in title.lower() for k in target_keywords) or any("engineering" in d for d in depts)
+                if not is_eng:
+                    continue
+
+                loc_name = j.get("location", {}).get("name", "").strip() or "India"
+                link = j.get("absolute_url") or f"https://job-boards.greenhouse.io/doordashindia/jobs/{job_id}"
+
+                seen_ids.add(job_id)
+                listings.append(
+                    JobListing(
+                        jobid=job_id,
+                        role_name=title,
+                        job_listing_link=link,
+                        location=loc_name,
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Greenhouse fallback error for DoorDash India: {e}")
+
+        return listings
+
+    async def scrape(self) -> List[JobListing]:
+        listings = await self._scrape_website()
+        if not listings:
+            logger.info("DoorDash website returned 0 listings (likely Cloudflare block on cloud IP). Trying Greenhouse API fallback...")
+            listings = await self._scrape_greenhouse_fallback()
+
+        logger.info(f"Finished DoorDash Careers scrape. Found total {len(listings)} listings.")
         return listings
