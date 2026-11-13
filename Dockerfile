@@ -7,9 +7,11 @@ ENV PORT=8000
 
 WORKDIR /app
 
-# Install system dependencies needed for Playwright's browser installation
+# Install system dependencies needed for Playwright's driver and browser installation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libatomic1 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
