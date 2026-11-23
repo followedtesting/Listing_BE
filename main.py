@@ -129,6 +129,12 @@ from adapters.improving_portal import ImprovingPortalAdapter
 from adapters.hubspot_portal import HubSpotPortalAdapter
 from adapters.allstate_portal import AllstatePortalAdapter
 from adapters.palo_alto_networks_portal import PaloAltoNetworksPortalAdapter
+from adapters.deployment_inc_portal import DeploymentIncPortalAdapter
+from adapters.couchbase_portal import CouchbasePortalAdapter
+from adapters.safe_security_portal import SafeSecurityPortalAdapter
+from adapters.thales_portal import ThalesPortalAdapter
+from adapters.macquarie_portal import MacquariePortalAdapter
+from adapters.jiostar_portal import JioStarPortalAdapter
 from mailer import generate_email_html, send_html_email, send_resend_email, send_digest_email_auto
 
 
@@ -271,6 +277,12 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     HubSpotPortalAdapter(),
     AllstatePortalAdapter(),
     PaloAltoNetworksPortalAdapter(),
+    DeploymentIncPortalAdapter(),
+    CouchbasePortalAdapter(),
+    SafeSecurityPortalAdapter(),
+    ThalesPortalAdapter(),
+    MacquariePortalAdapter(),
+    JioStarPortalAdapter(),
 ]
 
 app = FastAPI(
