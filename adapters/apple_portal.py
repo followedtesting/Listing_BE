@@ -9,6 +9,42 @@ from adapters.base import BaseJobAdapter, JobListing
 
 logger = logging.getLogger(__name__)
 
+BASE_SEARCH_URL = "https://jobs.apple.com/en-in/search"
+SEARCH_QUERY = (
+    "sort=newest&location=india-INDC&team="
+    "ai-and-machine-learning-data-operations-MLAI-AIMLDO+"
+    "computer-vision-MLAI-CV+"
+    "data-science-engineering-and-generation-MLAI-DSEG+"
+    "deep-learning-generative-ai-and-foundation-models-MLAI-DLRL+"
+    "engineering-project-and-programme-management-MLAI-EPPM+"
+    "information-systems-and-technology-MLAI-IST+"
+    "machine-learning-compute-and-infrastructure-MLAI-MLI+"
+    "mapping-and-motion-MLAI-MM+"
+    "natural-language-processing-and-speech-technologies-MLAI-NLP+"
+    "privacy-MLAI-PRI+"
+    "responsible-ai-and-safety-MLAI-RAIS+"
+    "search-and-knowledge-MLAI-SK+"
+    "security-MLAI-SEC+"
+    "apps-and-frameworks-SFTWR-AF+"
+    "camera-and-photos-SFTWR-CP+"
+    "cloud-and-back-end-infrastructure-SFTWR-CLD+"
+    "devops-and-site-reliability-SFTWR-DSR+"
+    "engineering-project-and-programme-management-SFTWR-EPM+"
+    "gpu-and-graphics-SFTWR-GPUG+"
+    "information-systems-and-technology-SFTWR-ISTECH+"
+    "machine-learning-and-ai-SFTWR-MCHLN+"
+    "operating-systems-SFTWR-COS+"
+    "product-design-SFTWR-PD+"
+    "security-and-privacy-SFTWR-SEC+"
+    "software-quality-automation-tools-and-validation-SFTWR-SQAT+"
+    "spatial-computing-SFTWR-SC+"
+    "trust-and-safety-SFTWR-TS+"
+    "user-experience-engineering-SFTWR-UEE+"
+    "video-media-and-audio-technologies-SFTWR-VMAT+"
+    "wireless-software-SFTWR-WSFT"
+)
+
+
 class ApplePortalAdapter(BaseJobAdapter):
     @property
     def portal_id(self) -> str:
@@ -25,7 +61,7 @@ class ApplePortalAdapter(BaseJobAdapter):
             href = (link.get("href") or "").strip()
             title = link.get_text(strip=True)
 
-            if not title or title.lower() == "see full role description":
+            if not title or title.lower() in ("see full role description", "where we're hiring", "where we’re hiring"):
                 continue
 
             parts = href.split("/")
@@ -41,12 +77,31 @@ class ApplePortalAdapter(BaseJobAdapter):
                 seen_ids.add(jobid)
                 added += 1
                 full_link = href if href.startswith("http") else f"https://jobs.apple.com{href}"
+
+                # Extract location from card row if available
+                location = "India"
+                row = link.find_parent("div", class_="job-list-item")
+                if row:
+                    loc_div = row.select_one(".job-title-location")
+                    if loc_div:
+                        store_name = loc_div.select_one("[id*='store-name']")
+                        if store_name and store_name.get_text(strip=True):
+                            city = store_name.get_text(strip=True)
+                            location = f"{city}, India" if "india" not in city.lower() else city
+                        else:
+                            copy_div = BeautifulSoup(str(loc_div), "html.parser")
+                            for bad in copy_div.select(".a11y, .visuallyhidden"):
+                                bad.decompose()
+                            raw = copy_div.get_text(strip=True)
+                            if raw:
+                                location = f"{raw}, India" if "india" not in raw.lower() else raw
+
                 listings.append(
                     JobListing(
                         jobid=jobid.strip(),
                         role_name=title,
                         job_listing_link=full_link,
-                        location="India",
+                        location=location,
                     )
                 )
         return added
@@ -59,17 +114,14 @@ class ApplePortalAdapter(BaseJobAdapter):
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
 
-        async with AsyncSession(impersonate="chrome120") as s:
+        async with AsyncSession(impersonate="chrome124") as s:
             page_num = 1
-            max_pages = 10
+            max_pages = 25
             while page_num <= max_pages:
-                url = (
-                    f"https://jobs.apple.com/en-in/search?"
-                    f"location=india-INDC&team=apps-and-frameworks-SFTWR-AF+machine-learning-SFTWR-MCHLN+core-operating-systems-SFTWR-COS"
-                    f"&page={page_num}"
-                )
+                url = f"{BASE_SEARCH_URL}?{SEARCH_QUERY}&page={page_num}"
                 resp = await s.get(url, headers=headers, timeout=25)
                 if resp.status_code != 200:
+                    logger.warning(f"Apple returned status {resp.status_code} on page {page_num}")
                     break
 
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -82,11 +134,10 @@ class ApplePortalAdapter(BaseJobAdapter):
         return listings
 
     async def _scrape_playwright(self) -> List[JobListing]:
-        url = "https://jobs.apple.com/en-in/search?location=india-INDC&team=apps-and-frameworks-SFTWR-AF+machine-learning-SFTWR-MCHLN+core-operating-systems-SFTWR-COS"
-        logger.info(f"Navigating to Apple Careers page via Playwright fallback: {url}")
+        logger.info("Scraping Apple Careers page via Playwright fallback...")
 
         listings: List[JobListing] = []
-        seen_ids = set()
+        seen_ids: Set[str] = set()
         playwright_obj = None
         browser = None
 
@@ -115,82 +166,24 @@ class ApplePortalAdapter(BaseJobAdapter):
             # Abort heavy assets
             await page.route(
                 "**/*.{png,jpg,jpeg,webp,svg,gif,woff,woff2,ttf,otf,eot,css,mp4,webm}",
-                lambda route: route.abort()
+                lambda route: route.abort(),
             )
 
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_timeout(4000)
-
             page_num = 1
-            max_pages = 10
+            max_pages = 25
 
             while page_num <= max_pages:
-                links = await page.query_selector_all("a")
-                page_listings_count = 0
-                duplicate_found = False
+                page_url = f"{BASE_SEARCH_URL}?{SEARCH_QUERY}&page={page_num}"
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(2000)
 
-                for link in links:
-                    href = await link.get_attribute("href")
-                    title = await link.inner_text()
-
-                    if href and "/details/" in href.lower():
-                        title_clean = title.strip()
-                        if not title_clean or title_clean.lower() == "see full role description":
-                            continue
-
-                        parts = href.strip().split("/")
-                        jobid = ""
-                        try:
-                            details_idx = parts.index("details")
-                            if details_idx + 1 < len(parts):
-                                jobid = parts[details_idx + 1]
-                        except ValueError:
-                            pass
-
-                        if jobid and title_clean:
-                            if jobid in seen_ids:
-                                duplicate_found = True
-                                break
-
-                            seen_ids.add(jobid)
-                            page_listings_count += 1
-                            job_listing_link = href.strip() if href.startswith("http") else f"https://jobs.apple.com{href.strip()}"
-
-                            listings.append(
-                                JobListing(
-                                    jobid=jobid.strip(),
-                                    role_name=title_clean,
-                                    job_listing_link=job_listing_link,
-                                    location="India",
-                                )
-                            )
-
-                if duplicate_found:
+                html = await page.content()
+                soup = BeautifulSoup(html, "html.parser")
+                added = self._extract_from_soup(soup, seen_ids, listings)
+                del soup
+                if added == 0:
                     break
-
-                next_button = await page.query_selector("button:has-text('Next Page'), button[aria-label='Next Page'], button.icon-chevronend")
-                if next_button and await next_button.is_visible():
-                    is_disabled = await page.evaluate("""
-                        (btn) => {
-                            if (btn.disabled || btn.classList.contains('disabled') || btn.getAttribute('aria-disabled') === 'true') {
-                                return true;
-                            }
-                            const parent = btn.closest('li');
-                            if (parent && (parent.classList.contains('disabled') || parent.classList.contains('pagination-disabled'))) {
-                                return true;
-                            }
-                            return false;
-                        }
-                    """, next_button)
-
-                    if is_disabled:
-                        break
-                    else:
-                        await next_button.click()
-                        await page.wait_for_timeout(4000)
-                        page_num += 1
-                else:
-                    break
+                page_num += 1
 
         except Exception as e:
             logger.error(f"Playwright fallback failed for Apple: {e}")

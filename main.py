@@ -135,6 +135,15 @@ from adapters.safe_security_portal import SafeSecurityPortalAdapter
 from adapters.thales_portal import ThalesPortalAdapter
 from adapters.macquarie_portal import MacquariePortalAdapter
 from adapters.jiostar_portal import JioStarPortalAdapter
+from adapters.payu_portal import PayUPortalAdapter
+from adapters.pwc_india_portal import PwCIndiaPortalAdapter
+from adapters.ey_portal import EYPortalAdapter
+from adapters.aon_portal import AonPortalAdapter
+from adapters.nice_portal import NICEPortalAdapter
+from adapters.samsung_portal import SamsungPortalAdapter
+from adapters.hdfc_bank_portal import HDFCBankPortalAdapter
+from adapters.commbank_portal import CommBankPortalAdapter
+from adapters.pega_portal import PegaPortalAdapter
 from mailer import generate_email_html, send_html_email, send_resend_email, send_digest_email_auto
 
 
@@ -283,6 +292,15 @@ ACTIVE_ADAPTERS: List[BaseJobAdapter] = [
     ThalesPortalAdapter(),
     MacquariePortalAdapter(),
     JioStarPortalAdapter(),
+    PayUPortalAdapter(),
+    PwCIndiaPortalAdapter(),
+    EYPortalAdapter(),
+    AonPortalAdapter(),
+    NICEPortalAdapter(),
+    SamsungPortalAdapter(),
+    HDFCBankPortalAdapter(),
+    CommBankPortalAdapter(),
+    PegaPortalAdapter(),
 ]
 
 app = FastAPI(
